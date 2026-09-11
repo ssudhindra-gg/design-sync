@@ -397,7 +397,10 @@ function RoomPage() {
 
           <Palette
             disabled={!canEdit}
-            onAdd={(kind) => addNode(kind, 240 + editor.diagram.nodes.length * 16, 200)}
+            onAdd={(kind) => {
+              const i = editor.diagram.nodes.length;
+              addNode(kind, 160 + (i % 4) * 240, 120 + Math.floor(i / 4) * 170);
+            }}
           />
 
           <div className="mt-auto">
