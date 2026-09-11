@@ -14,6 +14,9 @@ interface Props {
   selectedEdgeId: string | null;
   onSelect: (nodeIds: string[], edgeId: string | null) => void;
   onApply: (mutate: (d: Diagram) => void) => void;
+  onApplyLive: (mutate: (d: Diagram) => void) => void;
+  onBeginGesture: () => void;
+  onEndGesture: () => void;
   onAddNode: (kind: NodeKind, x: number, y: number) => void;
   svgRef: React.RefObject<SVGSVGElement | null>;
 }
@@ -38,6 +41,9 @@ export function DiagramCanvas({
   selectedEdgeId,
   onSelect,
   onApply,
+  onApplyLive,
+  onBeginGesture,
+  onEndGesture,
   onAddNode,
   svgRef,
 }: Props) {
@@ -74,7 +80,7 @@ export function DiagramCanvas({
       if (drag.mode === "move") {
         const dx = p.x - drag.startX;
         const dy = p.y - drag.startY;
-        onApply((d) => {
+        onApplyLive((d) => {
           for (const id of drag.ids) {
             const n = d.nodes.find((x) => x.id === id);
             const o = drag.origin[id];
@@ -86,21 +92,24 @@ export function DiagramCanvas({
         });
         return;
       }
-      onApply((d) => {
+      onApplyLive((d) => {
         const n = d.nodes.find((x) => x.id === drag.id);
         if (!n) return;
         n.w = Math.max(80, Math.round((drag.w + (p.x - drag.startX)) / 8) * 8);
         n.h = Math.max(48, Math.round((drag.h + (p.y - drag.startY)) / 8) * 8);
       });
     };
-    const up = () => setDrag(null);
+    const up = () => {
+      if (drag.mode !== "pan") onEndGesture();
+      setDrag(null);
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [drag, onApply, svgRef, toWorld]);
+  }, [drag, onApplyLive, onEndGesture, svgRef, toWorld]);
 
   const zoom = (factor: number) => {
     setVb((v) => ({
@@ -149,6 +158,7 @@ export function DiagramCanvas({
       const n = diagram.nodes.find((x) => x.id === nid);
       if (n && !n.locked) origin[nid] = { x: n.x, y: n.y };
     }
+    onBeginGesture();
     setDrag({ mode: "move", ids: Object.keys(origin), startX: p.x, startY: p.y, origin });
   };
 
@@ -289,6 +299,7 @@ export function DiagramCanvas({
                   onPointerDown={(e) => {
                     e.stopPropagation();
                     const p = toWorld(e.clientX, e.clientY);
+                    onBeginGesture();
                     setDrag({ mode: "resize", id: node.id, startX: p.x, startY: p.y, w: node.w, h: node.h });
                   }}
                 />
