@@ -198,7 +198,7 @@ export function createMockApi(): InterviewApi {
                   id: uid("m"),
                   authorId: other.id,
                   authorName: other.name,
-                  body: replies[Math.floor(Math.random() * replies.length)],
+                  body: replies[Math.floor(Math.random() * replies.length)] ?? "Sounds good.",
                   at: Date.now(),
                 });
               },
