@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as JoinSessionIdRouteImport } from './routes/join.$sessionId'
 import { Route as RoomSessionIdRouteImport } from './routes/room.$sessionId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JoinSessionIdRoute = JoinSessionIdRouteImport.update({
+  id: '/join/$sessionId',
+  path: '/join/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RoomSessionIdRoute = RoomSessionIdRouteImport.update({
@@ -25,27 +31,31 @@ const RoomSessionIdRoute = RoomSessionIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/join/$sessionId': typeof JoinSessionIdRoute
   '/room/$sessionId': typeof RoomSessionIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/join/$sessionId': typeof JoinSessionIdRoute
   '/room/$sessionId': typeof RoomSessionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/join/$sessionId': typeof JoinSessionIdRoute
   '/room/$sessionId': typeof RoomSessionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/room/$sessionId'
+  fullPaths: '/' | '/join/$sessionId' | '/room/$sessionId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/room/$sessionId'
-  id: '__root__' | '/' | '/room/$sessionId'
+  to: '/' | '/join/$sessionId' | '/room/$sessionId'
+  id: '__root__' | '/' | '/join/$sessionId' | '/room/$sessionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  JoinSessionIdRoute: typeof JoinSessionIdRoute
   RoomSessionIdRoute: typeof RoomSessionIdRoute
 }
 
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join/$sessionId': {
+      id: '/join/$sessionId'
+      path: '/join/$sessionId'
+      fullPath: '/join/$sessionId'
+      preLoaderRoute: typeof JoinSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/room/$sessionId': {
@@ -70,6 +87,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  JoinSessionIdRoute: JoinSessionIdRoute,
   RoomSessionIdRoute: RoomSessionIdRoute,
 }
 export const routeTree = rootRouteImport
