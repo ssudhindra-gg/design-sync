@@ -1,0 +1,804 @@
+openapi: 3.1.0
+info:
+  title: Whiteboard IV Interview API
+  version: 1.0.0
+  description: |
+    HTTP and WebSocket contract expected by the Whiteboard IV frontend.
+
+    The current frontend selects a local mock implementation, but its
+    `InterviewApi` interface maps to the operations below. Timestamps are Unix
+    milliseconds, matching JavaScript `Date.now()` values.
+
+    The frontend has no login screen or auth-header code yet. A production
+    adapter must supply the interviewer account credential for session
+    creation and retain the scoped participant credential established by
+    session creation or joining. The public session lookup is needed by the
+    join page before a guest has joined; it must return only invitation-safe
+    data when no session credential is present.
+servers:
+  - url: /api
+    description: Same-origin API prefix used by the frontend adapter
+tags:
+  - name: Sessions
+  - name: Participants
+  - name: Diagram
+  - name: Chat
+  - name: Notes
+  - name: Snapshots
+  - name: Realtime
+paths:
+  /sessions:
+    post:
+      tags: [Sessions]
+      operationId: createSession
+      summary: Create an interview session
+      description: Authenticated interviewers create a session and become its admitted interviewer participant.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session and host participant created.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/ParticipantSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [Sessions]
+      operationId: getSession
+      summary: Read the current session state
+      description: |
+        The join page calls this before the guest has joined, so this operation
+        is callable without authentication. An unauthenticated response must
+        redact private interviewer notes and any data not needed to join.
+        With a participant session credential it returns the full state used by
+        the room. A missing session is mapped to `null` by the frontend API
+        adapter.
+      security:
+        - sessionAuth: []
+        - {}
+      responses:
+        '200':
+          description: Current session state, or invitation-safe state for a public lookup.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionState'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Sessions]
+      operationId: updateSession
+      summary: Update session controls or metadata
+      description: Interviewer-only. The frontend uses this to change the title, pause editing, end the session, and set retention days.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSessionRequest'
+      responses:
+        '200':
+          description: Updated session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/participants:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [Participants]
+      operationId: joinSession
+      summary: Request to join a session
+      description: Public guest join. The server creates a waiting guest participant and establishes a scoped participant session credential.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinSessionRequest'
+      responses:
+        '201':
+          description: Participant created, normally with status `waiting` for a guest.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/ParticipantSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Participant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The session cannot accept another participant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sessions/{sessionId}/participants/{participantId}/status:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/ParticipantId'
+    patch:
+      tags: [Participants]
+      operationId: setParticipantStatus
+      summary: Admit or reject a participant
+      description: Interviewer-only waiting-room control. The frontend uses `admitted` and `rejected` and expects the complete participant list back.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetParticipantStatusRequest'
+      responses:
+        '200':
+          description: Updated participant list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Participant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/participants/{participantId}/presence:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/ParticipantId'
+    patch:
+      tags: [Participants]
+      operationId: updatePresence
+      summary: Update participant presence and audio flags
+      description: A participant may update only their own name, audio connection, and mute state. The response is the complete participant list.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePresenceRequest'
+      responses:
+        '200':
+          description: Updated participant list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Participant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/diagram:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    put:
+      tags: [Diagram]
+      operationId: saveDiagram
+      summary: Replace the session diagram
+      description: An admitted participant saves the complete diagram after local edits. The server remains authoritative and must enforce pause, ended-session, and lock permissions.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Diagram'
+      responses:
+        '200':
+          description: Persisted diagram.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Diagram'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/diagram/nodes/{nodeId}/lock:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/NodeId'
+    patch:
+      tags: [Diagram]
+      operationId: setNodeLock
+      summary: Lock or unlock one diagram node
+      description: Interviewer-only. The frontend sends the desired boolean lock state and expects the complete diagram back.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetNodeLockRequest'
+      responses:
+        '200':
+          description: Updated diagram.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Diagram'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/messages:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [Chat]
+      operationId: sendMessage
+      summary: Send a chat message
+      description: Any admitted participant may send a message. The server should derive or verify author identity from the participant credential even though the current frontend contract includes the author fields.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Created chat message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/notes:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    patch:
+      tags: [Notes]
+      operationId: saveNotes
+      summary: Update shared or interviewer-private notes
+      description: Admitted participants may update shared notes. Only the interviewer may send or receive `privateNotes`; the server must enforce that field-level permission.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveNotesRequest'
+      responses:
+        '200':
+          description: Updated notes. Private notes must be redacted for non-interviewers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notes'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/snapshots:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [Snapshots]
+      operationId: createSnapshot
+      summary: Save a named diagram snapshot
+      description: An admitted participant creates a snapshot of the current diagram. The frontend expects the complete snapshot list, newest first.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSnapshotRequest'
+      responses:
+        '201':
+          description: Updated snapshot list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Snapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/snapshots/{snapshotId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SnapshotId'
+    post:
+      tags: [Snapshots]
+      operationId: restoreSnapshot
+      summary: Restore a snapshot into the live diagram
+      description: An admitted participant with editing permission restores the selected snapshot. The frontend expects the resulting diagram.
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Restored diagram.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Diagram'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/snapshots/{snapshotId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/SnapshotId'
+    delete:
+      tags: [Snapshots]
+      operationId: deleteSnapshot
+      summary: Delete a snapshot
+      description: An admitted participant deletes a snapshot. The frontend expects the complete remaining snapshot list.
+      security:
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Updated snapshot list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Snapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{sessionId}/events:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [Realtime]
+      operationId: subscribe
+      summary: Subscribe to session change notifications
+      description: |
+        Upgrade this request to a WebSocket. The frontend calls this from both
+        the join page (before joining) and the room, so the handshake must be
+        allowed with the invitation link and may use the participant session
+        credential when available. Each server message is a JSON `SessionEvent`.
+
+        This channel only invalidates the frontend's cached session; the
+        frontend then calls `getSession` to fetch the full state. It is not the
+        diagram-operation or audio-media channel.
+      security:
+        - sessionAuth: []
+        - {}
+      x-websocket: true
+      x-message-schema:
+        $ref: '#/components/schemas/SessionEvent'
+      responses:
+        '101':
+          description: WebSocket protocol switched; subsequent messages are SessionEvent JSON objects.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Authenticated interviewer account credential used to create sessions.
+    sessionAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: SessionToken
+      description: Scoped credential for a participant in one session. A browser implementation may receive it as the HttpOnly ParticipantSession cookie instead.
+  headers:
+    ParticipantSessionCookie:
+      description: HttpOnly, Secure, SameSite-scoped participant credential for subsequent session requests.
+      schema:
+        type: string
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      description: Session identifier from the join URL.
+      schema:
+        type: string
+        minLength: 1
+    ParticipantId:
+      name: participantId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    NodeId:
+      name: nodeId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    SnapshotId:
+      name: snapshotId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid authentication.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Authenticated participant lacks the required role, status, or permission.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Session, participant, node, or snapshot was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples: [session_not_found]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    NodeKind:
+      type: string
+      enum: [service, llm, database, queue, cache, client, external, rectangle, note]
+    Role:
+      type: string
+      enum: [interviewer, guest]
+    ParticipantStatus:
+      type: string
+      enum: [waiting, admitted, rejected]
+
+    DiagramNode:
+      type: object
+      required: [id, kind, label, x, y, w, h]
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: '#/components/schemas/NodeKind'
+        label:
+          type: string
+        x:
+          type: number
+        y:
+          type: number
+        w:
+          type: number
+        h:
+          type: number
+        locked:
+          type: boolean
+          default: false
+    DiagramEdge:
+      type: object
+      required: [id, from, to, label]
+      properties:
+        id:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        label:
+          type: string
+    Diagram:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiagramNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiagramEdge'
+
+    Participant:
+      type: object
+      required: [id, name, role, status, audioConnected, muted, joinedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        status:
+          $ref: '#/components/schemas/ParticipantStatus'
+        audioConnected:
+          type: boolean
+        muted:
+          type: boolean
+        joinedAt:
+          type: integer
+          format: int64
+    ChatMessage:
+      type: object
+      required: [id, authorId, authorName, body, at]
+      properties:
+        id:
+          type: string
+        authorId:
+          type: string
+        authorName:
+          type: string
+        body:
+          type: string
+        at:
+          type: integer
+          format: int64
+    Notes:
+      type: object
+      required: [shared, privateNotes]
+      properties:
+        shared:
+          type: string
+        privateNotes:
+          type: string
+          description: Interviewer-only content; redact for guests.
+    Snapshot:
+      type: object
+      required: [id, name, at, diagram]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        at:
+          type: integer
+          format: int64
+        diagram:
+          $ref: '#/components/schemas/Diagram'
+    Session:
+      type: object
+      required: [id, title, createdAt, editingPaused, ended, retentionDays]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        editingPaused:
+          type: boolean
+        ended:
+          type: boolean
+        retentionDays:
+          type: integer
+          enum: [1, 7, 30, 90]
+    SessionState:
+      type: object
+      required: [session, participants, diagram, chat, notes, snapshots]
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Participant'
+        diagram:
+          $ref: '#/components/schemas/Diagram'
+        chat:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        notes:
+          $ref: '#/components/schemas/Notes'
+        snapshots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Snapshot'
+    SessionEvent:
+      type: object
+      required: [type, sessionId, origin]
+      properties:
+        type:
+          type: string
+          enum: [state, chat, diagram, presence]
+        sessionId:
+          type: string
+        origin:
+          type: string
+
+    CreateSessionRequest:
+      type: object
+      required: [title, hostName]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        hostName:
+          type: string
+    CreateSessionResponse:
+      type: object
+      required: [session, participant]
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+        participant:
+          $ref: '#/components/schemas/Participant'
+    UpdateSessionRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        editingPaused:
+          type: boolean
+        ended:
+          type: boolean
+        retentionDays:
+          type: integer
+          enum: [1, 7, 30, 90]
+    JoinSessionRequest:
+      type: object
+      required: [name, role]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+    SetParticipantStatusRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          $ref: '#/components/schemas/ParticipantStatus'
+    UpdatePresenceRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        audioConnected:
+          type: boolean
+        muted:
+          type: boolean
+        name:
+          type: string
+    SetNodeLockRequest:
+      type: object
+      required: [locked]
+      additionalProperties: false
+      properties:
+        locked:
+          type: boolean
+    SendMessageRequest:
+      type: object
+      required: [authorId, authorName, body]
+      additionalProperties: false
+      properties:
+        authorId:
+          type: string
+        authorName:
+          type: string
+        body:
+          type: string
+    SaveNotesRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        shared:
+          type: string
+        privateNotes:
+          type: string
+    CreateSnapshotRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
