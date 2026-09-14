@@ -1,15 +1,15 @@
-import { createMockApi } from "./mock/mock-api";
+import { createRealApi } from "./real-api";
 import type { InterviewApi } from "./types";
 
 let instance: InterviewApi | null = null;
 
 /**
  * Single place where the backend implementation is chosen.
- * Swap `createMockApi()` for a REST/WebSocket client that satisfies
- * `InterviewApi` and the whole app moves over with no other edits.
+ * Keep the implementation choice in one place so the UI only depends on the
+ * transport-agnostic InterviewApi contract.
  */
 export function getApi(): InterviewApi {
-  if (!instance) instance = createMockApi();
+  if (!instance) instance = createRealApi();
   return instance;
 }
 

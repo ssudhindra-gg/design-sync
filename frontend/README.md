@@ -1,6 +1,6 @@
 # Design Sync
 
-Build a collaborative system design interview web application with a modular mocked backend API/service layer designed for easy replacement with a real backend later. Key features:
+Build a collaborative system design interview web application backed by the FastAPI service in `../backend`. Key features:
 
 1. Interactive Collaborative Canvas:
 - Component palette: Service, LLM, Database, Queue, Cache, Client, External System, Generic Rectangle, Note.
@@ -22,7 +22,7 @@ Build a collaborative system design interview web application with a modular moc
 - Session retention/snapshot controls.
 
 5. Clean Architecture:
-- Structure all session, participant, chat, presence, and diagram operations behind a dedicated mock client/API service interface with realistic simulated latency and local storage persistence so replacing it with real WebSockets/REST APIs is seamless.
+- Structure all session, participant, chat, presence, and diagram operations behind a dedicated API service interface. The default implementation uses the backend's REST and WebSocket endpoints; configure its URL and interviewer credentials with `VITE_API_URL`, `VITE_API_USERNAME`, and `VITE_API_PASSWORD`.
 
 This project was built with [Lovable](https://lovable.dev).
 
