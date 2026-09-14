@@ -19,6 +19,7 @@ servers:
   - url: /api
     description: Same-origin API prefix used by the frontend adapter
 tags:
+  - name: Auth
   - name: Sessions
   - name: Participants
   - name: Diagram
@@ -27,6 +28,32 @@ tags:
   - name: Snapshots
   - name: Realtime
 paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Exchange an account password for a bearer token
+      description: |
+        The frontend contract has no login screen yet, but a real adapter needs
+        a way to obtain the account bearer token required by `POST /sessions`.
+        Passwords are verified against a strong password hash on the server;
+        the implementation must never store plaintext passwords.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Account bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /sessions:
     post:
       tags: [Sessions]
@@ -802,3 +829,22 @@ components:
       properties:
         name:
           type: string
+    LoginRequest:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+    TokenResponse:
+      type: object
+      required: [access_token, token_type]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
