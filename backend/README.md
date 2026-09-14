@@ -1,12 +1,14 @@
 # Whiteboard IV backend
 
 FastAPI implementation of the contract in the repository-root `openapi.yaml`.
-The service uses an in-memory store and seeds a demo account and session on
-startup.
+The service uses SQLAlchemy with SQLite by default and seeds a demo account and
+session on startup. Set `DATABASE_URL` to any SQLAlchemy-supported database URL
+to use another backend later (for example, `postgresql+psycopg://...`).
 
 ```powershell
 cd backend
 uv sync
+$env:DATABASE_URL = "sqlite:///./whiteboard.db"
 uv run uvicorn app.main:app --reload
 uv run pytest
 ```

@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from .auth import get_store_dependency
 from .routers import auth, chat, diagram, notes, participants, realtime, sessions, snapshots
-from .store import InMemoryStore
+from .store import DatabaseStore
 
 
 def _error_content(detail: object, default_code: str = "http_error") -> dict[str, object]:
@@ -16,11 +16,11 @@ def _error_content(detail: object, default_code: str = "http_error") -> dict[str
     return {"code": default_code, "message": str(detail)}
 
 
-def create_app(store: InMemoryStore | None = None) -> FastAPI:
+def create_app(store: DatabaseStore | None = None) -> FastAPI:
     app = FastAPI(
         title="Whiteboard IV Interview API",
         version="1.0.0",
-        description="In-memory FastAPI implementation of the Whiteboard IV frontend contract.",
+        description="SQLAlchemy-backed FastAPI implementation of the Whiteboard IV frontend contract.",
     )
     app.add_middleware(
         CORSMiddleware,
@@ -29,6 +29,8 @@ def create_app(store: InMemoryStore | None = None) -> FastAPI:
             "http://localhost:5173",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
         ],
         allow_credentials=True,
         allow_methods=["*"],
