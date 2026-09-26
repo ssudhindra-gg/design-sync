@@ -8,7 +8,7 @@ It is two components that can run separately or as one container:
 
 | Path        | Component | Stack                                          |
 | ----------- | --------- | ---------------------------------------------- |
-| `backend/`  | REST + WebSocket API | FastAPI, SQLAlchemy, SQLite, managed by `uv` |
+| `backend/`  | REST + WebSocket API | FastAPI, SQLAlchemy, SQLite or Postgres, managed by `uv` |
 | `frontend/` | Web UI    | React 19, TanStack Start/Router, Tailwind, Vite |
 
 The API contract shared by both lives in [`openapi.yaml`](./openapi.yaml); the
@@ -56,7 +56,7 @@ docker build -t design-sync \
 | Variable         | Default                              | Purpose                            |
 | ---------------- | ------------------------------------ | ---------------------------------- |
 | `PORT`           | `8000`                               | Port the backend listens on        |
-| `DATABASE_URL`   | `sqlite:////app/data/whiteboard.db`  | Any SQLAlchemy URL                 |
+| `DATABASE_URL`   | `sqlite:////app/data/whiteboard.db`  | Any SQLAlchemy URL; see [Use Postgres](#use-postgres) |
 | `FRONTEND_DIST`  | `/app/frontend/dist`                 | Static files to serve              |
 
 ## Run the components independently
@@ -103,12 +103,51 @@ make start     # backend on :8000 and frontend on :8080
 `make help` lists the rest. On Windows `make start` opens a terminal window per
 service; elsewhere it runs both in the foreground.
 
+## Use Postgres
+
+SQLite is the zero-config default and needs nothing running. Postgres takes over
+whenever `DATABASE_URL` points at it — the schema is created on first start, the
+same way it is for SQLite.
+
+```bash
+make db-up                     # postgres:16-alpine on :5432, data in a named volume
+make run-backend-pg            # backend against postgresql+psycopg://sdip:sdip@localhost:5432/sdip
+```
+
+`make db-down` stops the container and keeps the data; `make db-reset` deletes
+both the container and its volume; `make psql` opens a shell on it. To use a
+database elsewhere, set the variable yourself:
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg://user:password@host:5432/dbname"
+```
+
+Notes on the URL and the schema:
+
+- A driverless `postgres://` or `postgresql://` URL is rewritten to
+  `postgresql+psycopg://`, so it works without installing `psycopg2`.
+- From the app container, reach a Postgres on the Windows or macOS host as
+  `host.docker.internal` rather than `localhost`:
+  `docker run --rm -p 8000:8000 -e DATABASE_URL=postgresql+psycopg://sdip:sdip@host.docker.internal:5432/sdip design-sync`
+- The session document is stored as `jsonb`, and each write takes a `SELECT …
+  FOR UPDATE` row lock. That is what makes more than one backend worker against
+  one database safe: a whole session is a single JSON row, so every write is a
+  read-modify-write that would otherwise clobber a concurrent one.
+- There are no migrations. Tables are created if missing, so a schema change
+  means recreating them (`make db-reset`).
+
 ## Tests
 
 ```bash
 make test                      # or: uv run --directory backend pytest
+make test-pg                   # the same suite plus the Postgres integration tests
 npm run lint --prefix frontend
 ```
+
+`make test` needs no database: it runs on in-memory SQLite and skips the three
+Postgres integration tests. `make test-pg` sets `TEST_DATABASE_URL` and runs
+them against the `make db-up` container, including one that asserts two
+independent stores writing concurrently lose no messages.
 
 The backend suite passes clean. `npm run lint` currently reports pre-existing
 Prettier formatting differences; `npm run format --prefix frontend` fixes them,

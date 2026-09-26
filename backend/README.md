@@ -3,7 +3,7 @@
 FastAPI implementation of the contract in the repository-root `openapi.yaml`.
 The service uses SQLAlchemy with SQLite by default and seeds a demo account and
 session on startup. Set `DATABASE_URL` to any SQLAlchemy-supported database URL
-to use another backend later (for example, `postgresql+psycopg://...`).
+to use another database; Postgres is supported and tested.
 
 ```powershell
 cd backend
@@ -12,6 +12,22 @@ $env:DATABASE_URL = "sqlite:///./whiteboard.db"
 uv run uvicorn app.main:app --reload
 uv run pytest
 ```
+
+For Postgres, `make db-up` and `make run-backend-pg` from the repository root do
+the whole thing; `make test-pg` adds the integration tests. The equivalent by
+hand:
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg://sdip:sdip@localhost:5432/sdip"
+uv run uvicorn app.main:app --reload
+$env:TEST_DATABASE_URL = $env:DATABASE_URL   # opts the integration tests in
+uv run pytest
+```
+
+A driverless `postgres://` or `postgresql://` URL is rewritten to use psycopg 3.
+The root [README](../README.md#use-postgres) covers the rest: the `jsonb`
+column, the row lock that makes multiple workers safe, and the absence of
+migrations.
 
 Demo account:
 

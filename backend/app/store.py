@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from fastapi import WebSocket
 from sqlalchemy import JSON, String, create_engine, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session as DatabaseSession, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -31,7 +33,7 @@ class TokenRow(Base):
 class SessionRow(Base):
     __tablename__ = "sessions"
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    state: Mapped[dict[str, Any]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
 
 @dataclass(frozen=True)
 class StoredSessionToken:
@@ -43,15 +45,42 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 def make_id(prefix: str) -> str: return f"{prefix}_{uuid4().hex[:10]}"
 
+DEFAULT_DATABASE_URL = "sqlite:///./whiteboard.db"
+
+def normalize_database_url(url: str) -> str:
+    """Point driverless Postgres URLs at psycopg 3, which SQLAlchemy does not pick by default."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix): return f"postgresql+psycopg://{url[len(prefix):]}"
+    return url
+
+def engine_options(url: str) -> dict[str, Any]:
+    """Connection settings the URL's dialect needs.
+
+    SQLite is a file (or a single shared in-memory handle) touched from FastAPI's
+    threadpool; a networked database instead needs its pooled connections checked,
+    because a restart or an idle timeout on the server side leaves them stale.
+    """
+    if not url.startswith("sqlite"): return {"connect_args": {}, "pool_pre_ping": True}
+    options: dict[str, Any] = {"connect_args": {"check_same_thread": False}}
+    if url == "sqlite:///:memory:": options["poolclass"] = StaticPool
+    return options
+
+def commit_or_discard_conflict(db: DatabaseSession) -> bool:
+    """Commit, returning False when a concurrent writer already inserted the same row.
+
+    Seeding is a get-then-insert, so two workers booting against one shared
+    database can both decide a row is missing. Losing that race is expected.
+    """
+    try:
+        db.commit(); return True
+    except IntegrityError:
+        db.rollback(); return False
+
 class DatabaseStore:
     """SQLAlchemy persistence boundary; DATABASE_URL selects the backend."""
     def __init__(self, database_url: str | None = None, *, seed: bool = True) -> None:
-        self.database_url = database_url or os.getenv("DATABASE_URL", "sqlite:///./whiteboard.db")
-        args = {"check_same_thread": False} if self.database_url.startswith("sqlite") else {}
-        pool = StaticPool if self.database_url == "sqlite:///:memory:" else None
-        engine_options = {"connect_args": args}
-        if pool is not None: engine_options["poolclass"] = pool
-        self.engine = create_engine(self.database_url, **engine_options)
+        self.database_url = normalize_database_url(database_url or os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
+        self.engine = create_engine(self.database_url, **engine_options(self.database_url))
         Base.metadata.create_all(self.engine)
         self._session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
         self._connections: dict[str, set[WebSocket]] = defaultdict(set)
@@ -71,8 +100,11 @@ class DatabaseStore:
         account = AccountRecord(username=username, password_hash=hash_password(password))
         with self._db() as db:
             row = db.get(AccountRow, username)
-            if row is None: db.add(AccountRow(username=username, password_hash=account.password_hash)); db.commit()
-            else: account = AccountRecord(username=row.username, password_hash=row.password_hash)
+            if row is None:
+                db.add(AccountRow(username=username, password_hash=account.password_hash))
+                if commit_or_discard_conflict(db): return account
+                row = db.get(AccountRow, username)
+            if row is not None: account = AccountRecord(username=row.username, password_hash=row.password_hash)
         return account
     def seed(self) -> None:
         self.add_account("interviewer@example.com", "demo-password")
@@ -84,7 +116,7 @@ class DatabaseStore:
         candidate = Participant(id="p_candidate", name="Priya Raman", role=Role.guest, status=ParticipantStatus.admitted, audioConnected=False, muted=True, joinedAt=created + 60_000)
         diagram = Diagram(nodes=[DiagramNode(id="n_client", kind="client", label="Web client", x=80, y=160, w=160, h=80), DiagramNode(id="n_api", kind="service", label="Notification API", x=360, y=160, w=190, h=80), DiagramNode(id="n_queue", kind="queue", label="Delivery queue", x=680, y=160, w=180, h=80), DiagramNode(id="n_db", kind="database", label="Notification DB", x=960, y=160, w=180, h=80)], edges=[DiagramEdge(id="e_client_api", **{"from": "n_client"}, to="n_api", label="HTTPS"), DiagramEdge(id="e_api_queue", **{"from": "n_api"}, to="n_queue", label="publishes"), DiagramEdge(id="e_queue_db", **{"from": "n_queue"}, to="n_db", label="writes")])
         state = SessionState(session=session, participants=[host, candidate], diagram=diagram, chat=[ChatMessage(id="m_welcome", authorId=host.id, authorName=host.name, body="Let's start with the delivery guarantees and retry path.", at=created + 120_000)], notes=Notes(shared="At-least-once delivery is acceptable for the first iteration.", privateNotes="Ask about idempotency keys and backpressure."), snapshots=[Snapshot(id="snap_initial", name="Initial outline", at=created + 180_000, diagram=copy.deepcopy(diagram))])
-        with self._db() as db: db.add(SessionRow(id=state.session.id, state=self._dump(state))); db.commit()
+        with self._db() as db: db.add(SessionRow(id=state.session.id, state=self._dump(state))); commit_or_discard_conflict(db)
     def account_for_token(self, token: str) -> str | None:
         with self._db() as db:
             row = db.get(TokenRow, hash_token(token)); return row.username if row and row.kind == "account" else None
@@ -106,8 +138,12 @@ class DatabaseStore:
         if state: state.notes.privateNotes = ""
         return state
     def _update(self, session_id: str, mutate) -> SessionState:
+        # The whole session is one JSON document, so every write is a read-modify-write.
+        # The lock serializes this process; the row lock serializes the others, since a
+        # networked database can have several workers pointed at it. SQLite renders no
+        # FOR UPDATE clause, where the lock alone is already enough.
         with self._lock, self._db() as db:
-            row = db.get(SessionRow, session_id); state = self._state(row)
+            row = db.get(SessionRow, session_id, with_for_update=True); state = self._state(row)
             if state is None: raise KeyError(session_id)
             mutate(state); row.state = self._dump(state); db.commit(); return copy.deepcopy(state)
     def find_participant(self, session_id: str, participant_id: str) -> Participant | None:
