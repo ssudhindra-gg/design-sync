@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from .auth import get_store_dependency
 from .routers import auth, chat, diagram, notes, participants, realtime, sessions, snapshots
+from .static import mount_frontend
 from .store import DatabaseStore
 
 
@@ -65,6 +66,10 @@ def create_app(store: DatabaseStore | None = None) -> FastAPI:
         # A root alias makes the service convenient behind a reverse proxy that
         # already strips /api. It is intentionally omitted from generated docs.
         app.include_router(module.router, include_in_schema=False)
+
+    # Must come after the routers: the SPA fallback claims every unmatched path.
+    # No-ops when the frontend has not been built.
+    mount_frontend(app)
     return app
 
 

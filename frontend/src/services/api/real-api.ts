@@ -14,7 +14,15 @@ const defaultApiUrl =
   typeof window !== "undefined"
     ? `http://${window.location.hostname}:8000/api`
     : "http://localhost:8000/api";
-const apiRoot = (import.meta.env.VITE_API_URL ?? defaultApiUrl).replace(/\/$/, "");
+const configuredApiUrl = (import.meta.env.VITE_API_URL ?? defaultApiUrl).replace(/\/$/, "");
+// A root-relative VITE_API_URL (such as "/api", used when the backend serves
+// this bundle itself) is resolved against the page origin. subscribe() builds
+// its WebSocket URL by swapping http for ws, which only works on an absolute
+// URL, so the origin has to be filled in here rather than at the call site.
+const apiRoot =
+  configuredApiUrl.startsWith("/") && typeof window !== "undefined"
+    ? `${window.location.origin}${configuredApiUrl}`
+    : configuredApiUrl;
 const accountUsername = import.meta.env.VITE_API_USERNAME ?? "interviewer@example.com";
 const accountPassword = import.meta.env.VITE_API_PASSWORD ?? "demo-password";
 

@@ -11,5 +11,15 @@ export default defineConfig({
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
+
+    // SPA mode emits a static shell at build time instead of needing a Node
+    // server at runtime, which is what lets the FastAPI backend serve the
+    // frontend itself (see backend/app/static.py). Routing and rendering move
+    // to the client. outputPath overrides the default "/_shell" so the shell
+    // lands at the index.html the backend looks for.
+    spa: {
+      enabled: true,
+      prerender: { outputPath: "/index.html" },
+    },
   },
 });

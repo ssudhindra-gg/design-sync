@@ -1,0 +1,35 @@
+# Everything here is either rebuilt inside the image or irrelevant to the build.
+.git
+.gitignore
+docs
+openapi.yaml
+Makefile
+Dockerfile
+.dockerignore
+
+# Dependencies and build output - reinstalled/rebuilt in the frontend stage.
+**/node_modules
+frontend/.output
+frontend/.tanstack
+frontend/.nitro
+frontend/.wrangler
+frontend/.lovable
+frontend/dist
+frontend/dist-ssr
+
+# Python artifacts and the developer's local database.
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+backend/*.db
+
+# Local secrets and editor noise.
+**/.env
+**/.env.*
+!**/.env.example
+**/.dev.vars
+**/*.log
+.vscode
+.idea
+.DS_Store
