@@ -1,15 +1,19 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install install-frontend run run-backend run-backend-pg run-frontend start test test-pg compile db-up db-down db-logs db-reset psql
+.PHONY: help install install-frontend build-frontend run run-backend run-backend-pg run-frontend start test test-pg compile db-up db-down db-logs db-reset psql
 
 PG_CONTAINER := interview-canvas-db
 PG_VOLUME := interview-canvas-pgdata
 PG_IMAGE := postgres:16-alpine
 PG_URL := postgresql+psycopg://sdip:sdip@localhost:5432/sdip
 
+# Same-origin by default, since the backend serves the built bundle itself.
+FRONTEND_API_URL := /api
+
 help:
 	@echo "Whiteboard IV backend commands:"
 	@echo "  make install        Install backend dependencies with uv"
+	@echo "  make build-frontend Build the frontend the backend serves at /"
 	@echo "  make run            Start the FastAPI development server (SQLite)"
 	@echo "  make run-backend-pg Start the backend against the local Postgres"
 	@echo "  make start          Start both backend and frontend development servers"
@@ -28,6 +32,14 @@ install:
 
 install-frontend:
 	npm install --prefix frontend
+
+# MSYS_NO_PATHCONV keeps Git Bash from rewriting a leading-slash value such as
+# "/api" into a Windows path (C:/Program Files/Git/api), which Vite would then
+# bake into the bundle as the API origin, breaking every request at runtime.
+build-frontend: export MSYS_NO_PATHCONV := 1
+build-frontend: export VITE_API_URL := $(FRONTEND_API_URL)
+build-frontend:
+	npm run build --prefix frontend
 
 run:
 	$(MAKE) run-backend

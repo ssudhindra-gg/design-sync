@@ -76,7 +76,16 @@ uv run --directory backend uvicorn app.main:app --reload --host 127.0.0.1 --port
 
 When `frontend/.output/public` has not been built, the backend serves the API
 alone. If it *has* been built, the backend also serves that UI at `/` — handy
-for checking a production build locally.
+for checking a production build locally. Build it with:
+
+```bash
+make build-frontend            # or: FRONTEND_API_URL=https://api.example.com/api make build-frontend
+```
+
+Prefer that over a bare `npm run build` when you need a specific API origin. It
+sets `MSYS_NO_PATHCONV=1`, without which Git Bash rewrites the default `/api`
+into `C:/Program Files/Git/api` and Vite bakes that into the bundle — the UI
+then loads fine and every API call fails with `TypeError: Failed to fetch`.
 
 ### Frontend only
 
