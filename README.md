@@ -164,6 +164,7 @@ Notes on the URL and the schema:
 make test                      # or: uv run --directory backend pytest
 make test-pg                   # the same suite plus the Postgres integration tests
 make test-compose              # builds the image and tests it against docker-compose.yaml
+make test-e2e                  # Playwright: two browsers, one interview, against docker-compose.yaml
 npm run lint --prefix frontend
 ```
 
@@ -179,6 +180,15 @@ interview works over HTTP, chat events reach WebSocket listeners, and data
 survives an app restart and a `down`/`up`. It uses its own compose project on
 port 18000 (override with `COMPOSE_TEST_APP_PORT`) and deletes it afterwards,
 so a stack you already have running is untouched.
+
+`make test-e2e` (about 50 seconds) drives the UI with Playwright from `e2e/`. The
+interviewer creates a room (which logs in as the demo account; there is no login
+screen), copies the join link from **Share link**, and the candidate opens it in
+a separate browser context, asks to join and is admitted. The candidate then
+adds a component, and the test checks it appears on the interviewer's canvas
+without a reload. It uses compose project `design-sync-e2e` on port 18001
+(override with `E2E_APP_PORT`); failures keep a trace and screenshots in
+`e2e/test-results/`, viewable with `npx playwright show-trace`.
 
 The backend suite passes clean. `npm run lint` currently reports pre-existing
 Prettier formatting differences; `npm run format --prefix frontend` fixes them,

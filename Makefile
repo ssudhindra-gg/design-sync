@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install install-frontend build-frontend run run-backend run-backend-pg run-frontend start test test-pg test-compose compile db-up db-down db-logs db-reset psql
+.PHONY: help install install-frontend build-frontend run run-backend run-backend-pg run-frontend start test test-pg test-compose test-e2e compile db-up db-down db-logs db-reset psql
 
 PG_CONTAINER := interview-canvas-db
 PG_VOLUME := interview-canvas-pgdata
@@ -20,6 +20,7 @@ help:
 	@echo "  make test           Run the backend test suite"
 	@echo "  make test-pg        Run it again including the Postgres integration tests"
 	@echo "  make test-compose   Run the tests against docker-compose.yaml (builds the image)"
+	@echo "  make test-e2e       Run the Playwright browser tests against docker-compose.yaml"
 	@echo "  make compile        Compile-check the backend and tests"
 	@echo "  make db-up          Start (or create) the local Postgres container"
 	@echo "  make db-down        Stop it, keeping the data volume"
@@ -81,6 +82,12 @@ test-pg: test
 test-compose: export COMPOSE_TESTS := 1
 test-compose:
 	uv run --directory backend pytest tests/compose
+
+# Browser tests on their own compose project and port 18001; see e2e/stack.ts.
+test-e2e:
+	npm ci --prefix e2e
+	npm run install-browsers --prefix e2e
+	npm test --prefix e2e
 
 db-up:
 	docker start $(PG_CONTAINER) || docker run -d --name $(PG_CONTAINER) \
