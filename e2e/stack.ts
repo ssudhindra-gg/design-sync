@@ -15,7 +15,13 @@ export const BASE_URL = `http://localhost:${APP_PORT}`;
 export function compose(...args: string[]): string {
   // APP_PORT goes on every call, not just `up`, so nothing recreates the app on
   // the default port.
-  return execFileSync("docker", ["compose", "-f", COMPOSE_FILE, "-p", PROJECT, ...args], {
+  //
+  // --progress plain: stderr is the user's terminal but stdout is our pipe, and
+  // compose's default progress mode sees the terminal, picks its interactive
+  // display, then fails on Windows with "failed to get console: The handle is
+  // invalid".
+  const argv = ["compose", "-f", COMPOSE_FILE, "-p", PROJECT, "--progress", "plain", ...args];
+  return execFileSync("docker", argv, {
     env: { ...process.env, APP_PORT },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
