@@ -163,6 +163,7 @@ Notes on the URL and the schema:
 ```bash
 make test                      # or: uv run --directory backend pytest
 make test-pg                   # the same suite plus the Postgres integration tests
+make test-compose              # builds the image and tests it against docker-compose.yaml
 npm run lint --prefix frontend
 ```
 
@@ -170,6 +171,14 @@ npm run lint --prefix frontend
 Postgres integration tests. `make test-pg` sets `TEST_DATABASE_URL` and runs
 them against the `make db-up` container, including one that asserts two
 independent stores writing concurrently lose no messages.
+
+`make test-compose` (about 90 seconds) runs `backend/tests/compose` against the
+real image and Postgres: the app really writes to Postgres rather than its
+SQLite default, the UI and its bundle are served with the API at `/api`, a full
+interview works over HTTP, chat events reach WebSocket listeners, and data
+survives an app restart and a `down`/`up`. It uses its own compose project on
+port 18000 (override with `COMPOSE_TEST_APP_PORT`) and deletes it afterwards,
+so a stack you already have running is untouched.
 
 The backend suite passes clean. `npm run lint` currently reports pre-existing
 Prettier formatting differences; `npm run format --prefix frontend` fixes them,

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install install-frontend build-frontend run run-backend run-backend-pg run-frontend start test test-pg compile db-up db-down db-logs db-reset psql
+.PHONY: help install install-frontend build-frontend run run-backend run-backend-pg run-frontend start test test-pg test-compose compile db-up db-down db-logs db-reset psql
 
 PG_CONTAINER := interview-canvas-db
 PG_VOLUME := interview-canvas-pgdata
@@ -19,6 +19,7 @@ help:
 	@echo "  make start          Start both backend and frontend development servers"
 	@echo "  make test           Run the backend test suite"
 	@echo "  make test-pg        Run it again including the Postgres integration tests"
+	@echo "  make test-compose   Run the tests against docker-compose.yaml (builds the image)"
 	@echo "  make compile        Compile-check the backend and tests"
 	@echo "  make db-up          Start (or create) the local Postgres container"
 	@echo "  make db-down        Stop it, keeping the data volume"
@@ -74,6 +75,12 @@ run-backend-pg: run-backend
 
 test-pg: export TEST_DATABASE_URL := $(PG_URL)
 test-pg: test
+
+# Starts its own compose project on port 18000 and removes it afterwards, so a
+# stack you already have running is left alone.
+test-compose: export COMPOSE_TESTS := 1
+test-compose:
+	uv run --directory backend pytest tests/compose
 
 db-up:
 	docker start $(PG_CONTAINER) || docker run -d --name $(PG_CONTAINER) \
