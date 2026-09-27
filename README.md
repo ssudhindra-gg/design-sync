@@ -36,6 +36,19 @@ and the interactive docs at <http://localhost:8000/docs>.
 The named volume keeps `whiteboard.db` outside the container, so sessions
 survive a restart. Drop the `-v` flag if you want a throwaway database.
 
+### With Postgres, via Docker Compose
+
+`docker-compose.yaml` runs the same image against a `postgres:16-alpine`
+service, with its data in the `pgdata` volume:
+
+```bash
+docker compose up --build      # http://localhost:8000; set APP_PORT to change it
+docker compose down            # add -v to also delete the database
+```
+
+Postgres is not published to the host, so it does not clash with `make db-up`.
+Reach it with `docker compose exec db psql -U sdip -d sdip`.
+
 ### Pointing the UI at a different API origin
 
 Vite inlines `import.meta.env` values into the client bundle, so the API origin

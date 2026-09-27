@@ -1,0 +1,41 @@
+# The app image plus the Postgres it stores sessions in.
+#
+#   docker compose up --build     # then open http://localhost:8000
+#   docker compose down           # stop; add -v to also delete the database
+#
+# Postgres is only reachable from the app on the compose network, so it does
+# not clash with a `make db-up` container already bound to host port 5432. Open
+# a shell on it with `docker compose exec db psql -U sdip -d sdip`.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sdip
+      POSTGRES_PASSWORD: sdip
+      POSTGRES_DB: sdip
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sdip -d sdip"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://sdip:sdip@db:5432/sdip
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      # The schema is created at startup, so the database must accept
+      # connections first, not merely have its container running.
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
