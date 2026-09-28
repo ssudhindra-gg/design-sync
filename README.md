@@ -158,6 +158,33 @@ Notes on the URL and the schema:
 - There are no migrations. Tables are created if missing, so a schema change
   means recreating them (`make db-reset`).
 
+## Deploy to AWS
+
+A course-demo deployment: one EC2 instance runs `docker-compose.yaml` behind
+CloudFront, which provides the HTTPS the Share link button needs. Defined in
+`infra/cloudformation.yaml`; the design is in
+`docs/superpowers/specs/2026-09-27-aws-cloudformation-deploy-design.md`.
+
+```bash
+aws configure                  # once: credentials for the AWS CLI
+make aws-deploy                # ~15 min first time; prints https://….cloudfront.net
+make e2e-aws                   # Playwright against the live URL
+make aws-update                # deploy newly pushed code, keeping the database
+make aws-destroy               # delete everything
+```
+
+- The instance clones **GitHub**, not your working tree: push first.
+  `GIT_REF` picks a branch, tag or commit (default `main`), `AWS_REGION` the
+  region (default `us-east-1`).
+- Use `make aws-update` for code changes. Changing `GIT_REF` on
+  `make aws-deploy` replaces the instance, which deletes the database.
+- Anyone with the URL can create rooms (the demo login is in the bundle), the
+  data has no backups, and a stop/start of the instance breaks CloudFront's
+  origin. Keep it running or destroy it. Roughly $20/month while it runs.
+- Shell on the instance: the `ShellCommand` stack output
+  (`aws ssm start-session …`, needs the Session Manager plugin). Bootstrap log:
+  `/var/log/design-sync-bootstrap.log`.
+
 ## Tests
 
 ```bash
