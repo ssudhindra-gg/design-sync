@@ -29,12 +29,36 @@ output() {  # output <OutputKey>
     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
 }
 
+stack_parameter() {  # stack_parameter <ParameterKey>
+  cfn describe-stacks --stack-name "$STACK" \
+    --query "Stacks[0].Parameters[?ParameterKey=='$1'].ParameterValue" --output text
+}
+
+# Empty when the stack does not exist.
+stack_status() {
+  cfn describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true
+}
+
+app_url() {
+  local url
+  url=$(output AppUrl 2>/dev/null || true)
+  [[ "$url" == https://* ]] || die "stack $STACK in $REGION has no AppUrl; deploy it first (make aws-deploy)"
+  echo "$url"
+}
+
+latest_ami() {
+  aws ssm get-parameter --region "$REGION" \
+    --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
+    --query Parameter.Value --output text
+}
+
 check_ref_pushed() {
-  # Fail now on a ref GitHub does not have, rather than 25 minutes into boot.
-  if ! git ls-remote --exit-code origin "$GIT_REF" >/dev/null 2>&1 \
-    && ! git fetch -q origin "$GIT_REF" >/dev/null 2>&1; then
-    die "GIT_REF '$GIT_REF' is not on GitHub (origin); push it first"
-  fi
+  # Fail now on a ref GitHub does not have, or one without the infra files the
+  # instance runs, rather than minutes into a create that then rolls back.
+  git fetch -q origin "$GIT_REF" >/dev/null 2>&1 \
+    || die "GIT_REF '$GIT_REF' is not on GitHub (origin); push it first"
+  git cat-file -e "FETCH_HEAD:infra/bootstrap.sh" 2>/dev/null \
+    || die "GIT_REF '$GIT_REF' on GitHub has no infra/bootstrap.sh; push or merge the infra files first"
   if [ "$GIT_REF" = "$(git rev-parse --abbrev-ref HEAD)" ] \
     && [ -n "$(git log --oneline "origin/$GIT_REF..HEAD" 2>/dev/null)" ]; then
     echo "warning: local $GIT_REF has commits not pushed to origin; they will not be deployed" >&2
@@ -66,25 +90,47 @@ wait_for_url() {
 }
 
 cmd_deploy() {
-  check_ref_pushed
   check_credentials
-  local prefix_list url
+  check_ref_pushed
+  local prefix_list url status deployed_ref
+  local pinned=()
+  status=$(stack_status)
+  case "$status" in
+    "")
+      # First deploy: pin the AMI and the ref. Later deploys leave both at
+      # their previous values, because a new AMI would replace the instance
+      # (deleting the database) and a new ref would only stop/start it.
+      pinned=("GitRef=$GIT_REF" "AmiId=$(latest_ami)")
+      ;;
+    ROLLBACK_COMPLETE)
+      die "the first create of $STACK failed and rolled back; run 'make aws-destroy', then deploy again (DISABLE_ROLLBACK=1 keeps a failed instance for debugging)"
+      ;;
+    *)
+      deployed_ref=$(stack_parameter GitRef)
+      [ "$deployed_ref" = "$GIT_REF" ] \
+        || die "$STACK runs '$deployed_ref'; deploy other code with 'GIT_REF=$GIT_REF make aws-update'"
+      ;;
+  esac
   prefix_list=$(cloudfront_prefix_list)
   cfn deploy --template-file infra/cloudformation.yaml --stack-name "$STACK" \
     --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset \
-    --parameter-overrides "GitRef=$GIT_REF" "CloudFrontPrefixListId=$prefix_list"
-  url=$(output AppUrl)
+    ${DISABLE_ROLLBACK:+--disable-rollback} \
+    --parameter-overrides "CloudFrontPrefixListId=$prefix_list" "${pinned[@]}"
+  url=$(app_url)
   wait_for_url "$url"
   echo "$url"
 }
 
 cmd_update() {
-  check_ref_pushed
   check_credentials
+  check_ref_pushed
   local instance command_id status
   instance=$(output InstanceId)
-  # No double quotes inside: this string is embedded in JSON below.
-  local script="cd /opt/design-sync && git fetch origin && git checkout -f \$(git rev-parse --verify -q origin/$GIT_REF || echo $GIT_REF) && docker compose --progress plain up -d --build"
+  # No double quotes inside: this string is embedded in JSON below. The build
+  # log goes to a file because SSM keeps only the first 8,000 characters of
+  # stderr, and a failed build's error comes last.
+  local log=/var/log/design-sync-update.log
+  local script="{ cd /opt/design-sync && git fetch origin && git checkout -f \$(git rev-parse --verify -q origin/$GIT_REF || echo $GIT_REF) && docker compose --progress plain up -d --build; } > $log 2>&1 || { tail -n 60 $log >&2; exit 1; }"
   command_id=$(aws ssm send-command --region "$REGION" --instance-ids "$instance" \
     --document-name AWS-RunShellScript --comment "design-sync update to $GIT_REF" \
     --parameters "{\"commands\":[\"$script\"],\"executionTimeout\":[\"1800\"]}" \
@@ -96,7 +142,7 @@ cmd_update() {
       --instance-id "$instance" --query Status --output text 2>/dev/null || echo Pending)
     case "$status" in
       Success)
-        wait_for_url "$(output AppUrl)"
+        wait_for_url "$(app_url)"
         echo "updated"
         return 0
         ;;
@@ -112,7 +158,10 @@ cmd_update() {
 
 cmd_e2e() {
   check_credentials
-  E2E_BASE_URL="$(output AppUrl)" npm test --prefix e2e
+  local url
+  # Resolved first: an empty E2E_BASE_URL would silently test local docker instead.
+  url=$(app_url)
+  E2E_BASE_URL="$url" npm test --prefix e2e
 }
 
 cmd_destroy() {
@@ -126,7 +175,7 @@ cmd_destroy() {
 case "${1:-}" in
   deploy) cmd_deploy ;;
   update) cmd_update ;;
-  url) check_credentials; output AppUrl ;;
+  url) check_credentials; app_url ;;
   e2e) cmd_e2e ;;
   destroy) cmd_destroy ;;
   *)

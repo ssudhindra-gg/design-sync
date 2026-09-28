@@ -174,16 +174,24 @@ make aws-destroy               # delete everything
 ```
 
 - The instance clones **GitHub**, not your working tree: push first.
-  `GIT_REF` picks a branch, tag or commit (default `main`), `AWS_REGION` the
-  region (default `us-east-1`).
-- Use `make aws-update` for code changes. Changing `GIT_REF` on
-  `make aws-deploy` replaces the instance, which deletes the database.
+  `GIT_REF` picks a branch, tag or full commit SHA (default `main`),
+  `AWS_REGION` the region (default `us-east-1`). The deploy stops early if
+  that ref is not on GitHub or lacks `infra/bootstrap.sh`.
+- The first deploy pins the git ref and the Amazon Linux image; later
+  `make aws-deploy` runs keep both, so they never replace the instance. Use
+  `make aws-update` (with `GIT_REF=…` if needed) to deploy other code.
 - Anyone with the URL can create rooms (the demo login is in the bundle), the
   data has no backups, and a stop/start of the instance breaks CloudFront's
   origin. Keep it running or destroy it. Roughly $20/month while it runs.
 - Shell on the instance: the `ShellCommand` stack output
   (`aws ssm start-session …`, needs the Session Manager plugin). Bootstrap log:
-  `/var/log/design-sync-bootstrap.log`.
+  `/var/log/design-sync-bootstrap.log`; `make aws-update` logs to
+  `/var/log/design-sync-update.log`.
+- If the first deploy fails, CloudFormation rolls back and deletes the
+  instance with its log. Run `make aws-destroy`, then retry with
+  `DISABLE_ROLLBACK=1 make aws-deploy` to keep the instance for a look, or
+  read its boot output with
+  `aws ec2 get-console-output --latest --instance-id <id>` before it goes.
 
 ## Tests
 

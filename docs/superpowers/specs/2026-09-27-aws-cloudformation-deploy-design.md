@@ -55,8 +55,13 @@ browser ──HTTPS──> CloudFront (*.cloudfront.net) ──HTTP:80──> EC
 
 ### Instance
 
-- Amazon Linux 2023, x86_64, latest AMI via the public SSM parameter
-  `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`.
+- Amazon Linux 2023, x86_64. `infra/deploy.sh` reads the latest AMI from the
+  public SSM parameter
+  `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64` at
+  first deploy and passes it as the `AmiId` parameter, which later deploys
+  keep. (Revised after review: an SSM-typed template parameter is re-resolved
+  on every update, so each new AL2023 release would replace the instance and
+  delete the database.)
 - `t3.small` (parameter), 20 GB gp3 root volume.
 - Instance role with `AmazonSSMManagedInstanceCore`, for shell access via
   `aws ssm start-session` and for `make aws-update`.
@@ -114,9 +119,12 @@ the root disk.
 `AWS_REGION` (default `us-east-1`), `STACK_NAME` (default `design-sync`) and
 `GIT_REF` (default `main`) are overridable.
 
-Changing the template's instance properties (for example `GitRef` or user
-data) replaces the instance and **loses the database**; code updates go
-through `make aws-update` instead. The README says so.
+`GitRef` and `AmiId` are set at first deploy only; later deploys keep them.
+`make aws-deploy` refuses a `GIT_REF` that differs from the deployed one,
+because a user-data change only stops and starts the instance (old code, new
+public DNS name). Code updates go through `make aws-update`. A stack whose
+first create failed (`ROLLBACK_COMPLETE`) must be destroyed before deploying
+again; `DISABLE_ROLLBACK=1` keeps a failed instance for debugging.
 
 ## Verification
 

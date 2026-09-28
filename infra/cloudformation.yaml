@@ -12,8 +12,10 @@ Parameters:
     Type: String
     Default: main
     Description: >-
-      Branch, tag or commit deployed at first boot. Changing it replaces the
-      instance and deletes its database; use `make aws-update` for code updates.
+      Branch, tag or full commit SHA deployed at first boot. Only read then:
+      changing it later just stops and starts the instance (new public DNS
+      name, old code), so infra/deploy.sh refuses and `make aws-update` is the
+      way to deploy other code.
   InstanceType:
     Type: String
     Default: t3.small
@@ -24,9 +26,12 @@ Parameters:
     Description: >-
       ID of the com.amazonaws.global.cloudfront.origin-facing managed prefix
       list in this region; infra/deploy.sh looks it up.
-  LatestAmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: >-
+      Amazon Linux 2023 AMI, pinned by infra/deploy.sh at first deploy. Not an
+      SSM parameter type: CloudFormation re-resolves those on every update, so
+      each new AL2023 release would replace the instance and its database.
 
 Resources:
   Vpc:
@@ -116,7 +121,7 @@ Resources:
         Count: 1
         Timeout: PT25M
     Properties:
-      ImageId: !Ref LatestAmiId
+      ImageId: !Ref AmiId
       InstanceType: !Ref InstanceType
       IamInstanceProfile: !Ref InstanceProfile
       SubnetId: !Ref PublicSubnet
