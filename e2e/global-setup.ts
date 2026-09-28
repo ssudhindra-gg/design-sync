@@ -1,6 +1,10 @@
-import { compose, waitUntilServing } from "./stack";
+import { compose, EXTERNAL_URL, waitUntilServing } from "./stack";
 
 export default async function globalSetup(): Promise<void> {
+  if (EXTERNAL_URL) {
+    await waitUntilServing();
+    return;
+  }
   // Clear anything a previous, interrupted run left behind.
   compose("down", "-v", "--remove-orphans");
   try {

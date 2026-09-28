@@ -10,7 +10,10 @@ import path from "node:path";
 const COMPOSE_FILE = path.resolve(__dirname, "..", "docker-compose.yaml");
 const PROJECT = "design-sync-e2e";
 export const APP_PORT = process.env.E2E_APP_PORT ?? "18001";
-export const BASE_URL = `http://localhost:${APP_PORT}`;
+// E2E_BASE_URL runs the suite against an already running deployment (such as
+// the AWS stack from infra/deploy.sh) instead of starting docker compose here.
+export const EXTERNAL_URL = process.env.E2E_BASE_URL?.replace(/\/+$/, "") || undefined;
+export const BASE_URL = EXTERNAL_URL ?? `http://localhost:${APP_PORT}`;
 
 export function compose(...args: string[]): string {
   // APP_PORT goes on every call, not just `up`, so nothing recreates the app on
@@ -38,5 +41,6 @@ export async function waitUntilServing(timeoutMs = 120_000): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`app did not answer on ${BASE_URL} within ${timeoutMs / 1000}s:\n${compose("logs", "--tail", "50")}`);
+  const logs = EXTERNAL_URL ? "" : `:\n${compose("logs", "--tail", "50")}`;
+  throw new Error(`app did not answer on ${BASE_URL} within ${timeoutMs / 1000}s${logs}`);
 }
