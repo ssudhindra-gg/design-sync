@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  design-sync course demo: one EC2 instance running docker-compose.yaml behind
+  CloudFront for HTTPS. See docs/superpowers/specs/2026-09-27-aws-cloudformation-deploy-design.md.
+
+Parameters:
+  GitRepository:
+    Type: String
+    Default: https://github.com/ssudhindra-gg/design-sync.git
+    Description: Public repository the instance clones at first boot.
+  GitRef:
+    Type: String
+    Default: main
+    Description: >-
+      Branch, tag or commit deployed at first boot. Changing it replaces the
+      instance and deletes its database; use `make aws-update` for code updates.
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium]
+  CloudFrontPrefixListId:
+    Type: String
+    AllowedPattern: "pl-[0-9a-f]+"
+    Description: >-
+      ID of the com.amazonaws.global.cloudfront.origin-facing managed prefix
+      list in this region; infra/deploy.sh looks it up.
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      # CloudFront needs the instance's public DNS name as its origin.
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Ref AWS::StackName }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: !Ref AWS::StackName }]
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Ref AWS::StackName }]
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTP from CloudFront only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: CloudFront origin-facing servers
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !Ref CloudFrontPrefixListId
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      # Session Manager shell access and `make aws-update` (SSM Run Command).
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  Instance:
+    Type: AWS::EC2::Instance
+    # The user data needs the internet (dnf, GitHub) as soon as it boots.
+    DependsOn: [DefaultRoute, SubnetRouteTableAssociation]
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT25M
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref AppSecurityGroup]
+      MetadataOptions:
+        HttpTokens: required
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            Encrypted: true
+      Tags: [{ Key: Name, Value: !Ref AWS::StackName }]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Clone the repository, hand over to infra/bootstrap.sh, and report
+          # the outcome to CloudFormation either way.
+          set -euo pipefail
+          exec > >(tee -a /var/log/design-sync-bootstrap.log) 2>&1
+          signal() {
+            /opt/aws/bin/cfn-signal -e "$1" --stack ${AWS::StackName} --resource Instance --region ${AWS::Region} || true
+          }
+          trap 'signal 1' ERR
+          dnf install -y git aws-cfn-bootstrap
+          git clone ${GitRepository} /opt/design-sync
+          git -C /opt/design-sync checkout ${GitRef}
+          bash /opt/design-sync/infra/bootstrap.sh
+          signal 0
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub ${AWS::StackName} course demo
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+        Origins:
+          - Id: app
+            DomainName: !GetAtt Instance.PublicDnsName
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: app
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # Managed-CachingDisabled: API responses must never be cached.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # Managed-AllViewerExceptHostHeader: cookies, query strings and the
+          # WebSocket upgrade headers reach the app.
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+Outputs:
+  AppUrl:
+    Value: !Sub https://${Distribution.DomainName}
+  InstanceId:
+    Value: !Ref Instance
+  ShellCommand:
+    Description: Needs the Session Manager plugin for the AWS CLI.
+    Value: !Sub aws ssm start-session --target ${Instance} --region ${AWS::Region}
