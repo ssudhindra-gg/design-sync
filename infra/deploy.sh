@@ -181,6 +181,17 @@ cmd_destroy() {
 
 cmd_release() {
   [[ "${RELEASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || die "RELEASE_SHA must be the full commit SHA to release"
+  # Never move the instance back to an older commit: deploy jobs run one at a
+  # time but not in push order, and old runs can be re-run. When main has
+  # moved on, the newer push's own run releases its commit.
+  local tip
+  git fetch -q origin main >/dev/null 2>&1 || die "cannot fetch main from origin"
+  tip=$(git rev-parse FETCH_HEAD)
+  if [ "$tip" != "$RELEASE_SHA" ]; then
+    echo "$RELEASE_SHA is superseded by $tip on main; skipping the release" >&2
+    ci_output released=false
+    return 0
+  fi
   check_credentials
   # deploy applies template changes under the ref the stack was created with
   # (main for a new stack); update then moves the instance to the exact commit.
@@ -194,6 +205,12 @@ cmd_release() {
   cmd_deploy
   GIT_REF=$RELEASE_SHA
   cmd_update
+  ci_output released=true
+}
+
+# Hand a key=value to later GitHub Actions steps; a no-op outside Actions.
+ci_output() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "$1" >> "$GITHUB_OUTPUT"; fi
 }
 
 # True when a /api/health body reports status and database ok and version $2.

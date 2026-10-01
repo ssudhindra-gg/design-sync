@@ -35,6 +35,8 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: design-sync-github-deploy
+      # Matches role-duration-seconds in ci.yml: a first release can exceed 1 h.
+      MaxSessionDuration: 7200
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:

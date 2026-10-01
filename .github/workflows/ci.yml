@@ -87,6 +87,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    # A first release (stack create, image build, CloudFront) can take over an
+    # hour; the AWS session below is sized to match.
+    timeout-minutes: 120
     concurrency:
       group: aws-deploy
       cancel-in-progress: false
@@ -98,11 +101,15 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
       - name: Release this commit
+        id: release
+        # Skips (released=false) when main has moved past this commit.
         run: bash infra/deploy.sh release
         env:
           RELEASE_SHA: ${{ github.sha }}
       - name: Verify /api/health reports this commit
+        if: steps.release.outputs.released == 'true'
         run: bash infra/deploy.sh verify "$GITHUB_SHA"
       - uses: actions/setup-node@v7
         with:
@@ -110,6 +117,7 @@ jobs:
           cache: npm
           cache-dependency-path: e2e/package-lock.json
       - name: Smoke test the live URL
+        if: steps.release.outputs.released == 'true'
         run: |
           npm ci --prefix e2e
           (cd e2e && npx playwright install --with-deps chromium)

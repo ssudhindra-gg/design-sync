@@ -80,9 +80,21 @@ printf '#!/usr/bin/env bash\ncase " $* " in *" -o "*) ;; *) printf "%%s" "${FAKE
 # Single quotes on purpose: these $ expand when the fakes run, not here.
 # shellcheck disable=SC2016
 printf '#!/usr/bin/env bash\necho "npm $*" >> "$FAKE_LOG"\n' > "$FAKE/bin/npm"
-# git that pretends every ref is on GitHub with infra/bootstrap.sh in it.
-# shellcheck disable=SC2016
-printf '#!/usr/bin/env bash\ncase "$1" in fetch | cat-file) exit 0 ;; esac\nexec "$REAL_GIT" "$@"\n' > "$FAKE/git/git"
+# git that pretends every ref is on GitHub with infra/bootstrap.sh in it, and
+# that main's tip is FAKE_MAIN_TIP (default: the commit being released).
+cat > "$FAKE/git/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  fetch | cat-file) exit 0 ;;
+  rev-parse)
+    if [ "${2:-}" = FETCH_HEAD ]; then
+      echo "${FAKE_MAIN_TIP:-${RELEASE_SHA:-}}"
+      exit 0
+    fi
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+EOF
 chmod +x "$FAKE"/bin/* "$FAKE/git/git"
 
 # Run deploy.sh against the fakes, then print the recorded calls so a check's
@@ -156,6 +168,34 @@ check "oidc prints the role ARN to configure" 0 "AWS_ROLE_ARN=arn:aws:iam::12345
   fake_aws bash infra/deploy.sh oidc
 check "deploy role cannot edit itself or attach arbitrary policies" 0 "InstanceRole-\*" -- \
   bash -c '! grep -qE "role/design-sync-\*" infra/github-oidc.yaml && grep -q "iam:PolicyARN" infra/github-oidc.yaml && grep -o "role/design-sync-InstanceRole-\*" infra/github-oidc.yaml'
+OTHER_SHA=fedcba9876543210fedcba9876543210fedcba98
+# Release as CI does, then print what CI reads back from $GITHUB_OUTPUT.
+# shellcheck disable=SC2329  # invoked through check's "$@"
+release_for_ci() {
+  local out="$FAKE/github_output"
+  : > "$out"
+  fake_aws_and_git env GITHUB_OUTPUT="$out" RELEASE_SHA="$SHA" "$@" bash infra/deploy.sh release
+  local status=$?
+  cat "$out"
+  return "$status"
+}
+# shellcheck disable=SC2329  # invoked through check's "$@"
+superseded_release_changes_nothing() {
+  local output
+  output=$(release_for_ci FAKE_MAIN_TIP="$OTHER_SHA" 2>&1) || { echo "$output"; return 1; }
+  if grep -qE " deploy |send-command" <<<"$output"; then echo "$output"; return 1; fi
+  echo "no AWS changes"
+}
+check "release tells CI it released" 0 "^released=true$" -- \
+  release_for_ci
+check "release of a commit main has moved past tells CI it skipped" 0 "^released=false$" -- \
+  release_for_ci FAKE_MAIN_TIP=$OTHER_SHA
+check "release of a commit main has moved past changes nothing" 0 "no AWS changes" -- \
+  superseded_release_changes_nothing
+check "CI verifies only what it released" 0 "^2$" -- \
+  grep -c "steps.release.outputs.released == 'true'" .github/workflows/ci.yml
+check "deploy credentials outlast the deploy" 0 "role-duration-seconds: 7200" -- \
+  bash -c 'grep -q "MaxSessionDuration: 7200" infra/github-oidc.yaml && grep -o "role-duration-seconds: 7200" .github/workflows/ci.yml'
 check "bootstrap failure is signalled to CloudFormation" 0 "trap 'signal 1' ERR" -- \
   grep -F "trap 'signal 1' ERR" infra/cloudformation.yaml
 

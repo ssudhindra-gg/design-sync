@@ -109,8 +109,13 @@ Actions are pinned to major versions (`actions/checkout@v4`, etc.).
   builds twice; accepted.
 - `verify <sha>`: poll `<AppUrl>/api/health` (every 10 s, up to 10 min) until
   it returns 200 with `database == "ok"` and `version == <sha>`; on timeout
-  print the last response and exit 1. JSON is parsed with `python3`
-  (present on GitHub runners and the dev machine).
+  print the last response and exit 1. The body is checked by exact pattern
+  match on the compact JSON Starlette renders, not with `python3` (on Windows
+  `python3` can be the Microsoft Store stub). (Revised during implementation.)
+- `release` skips, reporting `released=false` to later steps, when `main` has
+  moved past `RELEASE_SHA`, so out-of-order or re-run deploy jobs never move
+  the instance back. The deploy job's session lasts 2 h (`MaxSessionDuration`
+  and `role-duration-seconds` 7200, job timeout 120 min). (Added after review.)
 - Offline checks in `infra/test-deploy.sh` (fake `aws`): `release` on a new
   stack deploys with `GitRef=main` then sends an update for the SHA;
   `release` on an existing stack keeps its pinned ref; `release` without
