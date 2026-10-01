@@ -193,6 +193,33 @@ make aws-destroy               # delete everything
   read its boot output with
   `aws ec2 get-console-output --latest --instance-id <id>` before it goes.
 
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every pull request and push to `main`:
+
+| Job | Runs |
+| --- | --- |
+| `backend` | `make test-pg` against a Postgres service container |
+| `frontend` (parallel) | Vitest, `tsc --noEmit`, production build |
+| `compose` | `make test-compose`, then the Playwright suite, against `docker-compose.yaml` |
+| `deploy` | `main` only: `deploy.sh release`, then `deploy.sh verify` until `/api/health` reports the commit, then Playwright against the live URL |
+
+The deploy job assumes an AWS role through GitHub OIDC (no stored keys) and
+is **skipped** until that role exists. One-time setup, with admin
+credentials:
+
+```bash
+make aws-oidc     # prints AWS_ROLE_ARN and AWS_REGION
+```
+
+Add both as repository variables (Settings > Secrets and variables >
+Actions > Variables). Only pushes to `main` of this repository can assume the
+role. Lint is not part of CI yet: `npm run lint` has pre-existing formatting
+failures.
+
+`GET /api/health` returns `{"status":"ok","database":"ok","version":"<commit>"}`
+(503 when the database is unreachable); `version` is `dev` outside a deploy.
+
 ## Tests
 
 ```bash

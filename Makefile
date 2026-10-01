@@ -124,6 +124,7 @@ infra-check: export UV_LINK_MODE := copy
 infra-check:
 	uvx cfn-lint infra/cloudformation.yaml infra/github-oidc.yaml
 	uvx --from shellcheck-py shellcheck infra/bootstrap.sh infra/deploy.sh infra/test-deploy.sh
+	uvx --from actionlint-py actionlint .github/workflows/ci.yml
 	bash infra/test-deploy.sh
 
 aws-deploy:
