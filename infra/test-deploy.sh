@@ -52,6 +52,7 @@ case "$*" in
       *GitRef*) echo "${FAKE_GITREF:-main}" ;;
       *AppUrl*) echo "https://fake.cloudfront.net" ;;
       *InstanceId*) echo "i-fake" ;;
+      *RoleArn*) echo "arn:aws:iam::123456789012:role/design-sync-github-deploy" ;;
     esac
     ;;
   *describe-managed-prefix-lists*) echo pl-fake ;;
@@ -69,10 +70,13 @@ case "$*" in
       *Status*) echo "${FAKE_UPDATE_STATUS:-Success}" ;;
     esac
     ;;
+  *"iam list-open-id-connect-providers"*) echo "${FAKE_OIDC_PROVIDER:-None}" ;;
   *) echo "fake aws: unexpected call: $*" >&2; exit 99 ;;
 esac
 EOF
-printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE/bin/curl"
+# curl that serves FAKE_HEALTH_BODY, except when told to discard it with -o.
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\ncase " $* " in *" -o "*) ;; *) printf "%%s" "${FAKE_HEALTH_BODY:-}" ;; esac\n' > "$FAKE/bin/curl"
 # Single quotes on purpose: these $ expand when the fakes run, not here.
 # shellcheck disable=SC2016
 printf '#!/usr/bin/env bash\necho "npm $*" >> "$FAKE_LOG"\n' > "$FAKE/bin/npm"
@@ -124,6 +128,34 @@ check "update reports the deployed commit as APP_VERSION" 0 'export APP_VERSION=
 # shellcheck disable=SC2016  # $f expands inside the bash -c script
 check "every readiness check uses the health endpoint" 0 "all use /api/health" -- \
   bash -c 'for f in infra/deploy.sh infra/bootstrap.sh Dockerfile e2e/stack.ts backend/tests/compose/conftest.py; do grep -qF /api/health "$f" || { echo "missing in $f"; exit 1; }; done; echo "all use /api/health"'
+SHA=0123456789abcdef0123456789abcdef01234567
+check "release needs the full commit SHA" 1 "RELEASE_SHA" -- \
+  fake_aws_and_git bash infra/deploy.sh release
+check "release creates a new stack from main" 0 "deploy .*GitRef=main" -- \
+  fake_aws_and_git env RELEASE_SHA=$SHA bash infra/deploy.sh release
+check "release updates the instance to the SHA" 0 "update to $SHA" -- \
+  fake_aws_and_git env RELEASE_SHA=$SHA bash infra/deploy.sh release
+check "release keeps an existing stack's pinned ref" 0 "deploy .*--parameter-overrides CloudFrontPrefixListId=pl-fake$" -- \
+  fake_aws_and_git env FAKE_STACK_STATUS=CREATE_COMPLETE FAKE_GITREF=v1 RELEASE_SHA=$SHA bash infra/deploy.sh release
+check "verify passes when the released SHA answers" 0 "healthy" -- \
+  fake_aws env FAKE_STACK_STATUS=CREATE_COMPLETE VERIFY_ATTEMPTS=2 VERIFY_INTERVAL=0 \
+    FAKE_HEALTH_BODY="{\"status\":\"ok\",\"database\":\"ok\",\"version\":\"$SHA\"}" bash infra/deploy.sh verify $SHA
+check "verify fails while another version answers" 1 "never reported" -- \
+  fake_aws env FAKE_STACK_STATUS=CREATE_COMPLETE VERIFY_ATTEMPTS=2 VERIFY_INTERVAL=0 \
+    FAKE_HEALTH_BODY='{"status":"ok","database":"ok","version":"old"}' bash infra/deploy.sh verify $SHA
+check "verify fails while the database is down" 1 "never reported" -- \
+  fake_aws env FAKE_STACK_STATUS=CREATE_COMPLETE VERIFY_ATTEMPTS=2 VERIFY_INTERVAL=0 \
+    FAKE_HEALTH_BODY="{\"status\":\"error\",\"database\":\"unavailable\",\"version\":\"$SHA\"}" bash infra/deploy.sh verify $SHA
+check "oidc on a new account creates the GitHub provider" 0 "deploy .*github-oidc.*CreateOidcProvider=true" -- \
+  fake_aws bash infra/deploy.sh oidc
+check "oidc reuses an existing GitHub provider" 0 "ExistingOidcProviderArn=arn:aws:iam::1:oidc-provider/token" -- \
+  fake_aws env FAKE_OIDC_PROVIDER=arn:aws:iam::1:oidc-provider/token.actions.githubusercontent.com bash infra/deploy.sh oidc
+check "oidc rerun keeps the provider settings" 0 "deploy .*--parameter-overrides GitHubRepository=[^ ]+$" -- \
+  fake_aws env FAKE_STACK_STATUS=CREATE_COMPLETE bash infra/deploy.sh oidc
+check "oidc prints the role ARN to configure" 0 "AWS_ROLE_ARN=arn:aws:iam::123456789012:role/design-sync-github-deploy" -- \
+  fake_aws bash infra/deploy.sh oidc
+check "deploy role cannot edit itself or attach arbitrary policies" 0 "InstanceRole-\*" -- \
+  bash -c '! grep -qE "role/design-sync-\*" infra/github-oidc.yaml && grep -q "iam:PolicyARN" infra/github-oidc.yaml && grep -o "role/design-sync-InstanceRole-\*" infra/github-oidc.yaml'
 check "bootstrap failure is signalled to CloudFormation" 0 "trap 'signal 1' ERR" -- \
   grep -F "trap 'signal 1' ERR" infra/cloudformation.yaml
 

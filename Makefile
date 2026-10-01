@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install install-frontend build-frontend run run-backend run-backend-pg run-frontend start test test-pg test-compose test-e2e e2e aws-deploy aws-update aws-url aws-destroy e2e-aws infra-check compile db-up db-down db-logs db-reset psql
+.PHONY: help install install-frontend build-frontend run run-backend run-backend-pg run-frontend start test test-pg test-compose test-e2e e2e aws-deploy aws-update aws-url aws-destroy aws-oidc e2e-aws infra-check compile db-up db-down db-logs db-reset psql
 
 PG_CONTAINER := interview-canvas-db
 PG_VOLUME := interview-canvas-pgdata
@@ -27,6 +27,7 @@ help:
 	@echo "  make aws-url        Print the deployed HTTPS URL"
 	@echo "  make e2e-aws        Run the Playwright suite against the deployed URL"
 	@echo "  make aws-destroy    Delete the AWS stack and everything in it"
+	@echo "  make aws-oidc       One-time: create the GitHub OIDC deploy role (admin credentials)"
 	@echo "  make compile        Compile-check the backend and tests"
 	@echo "  make db-up          Start (or create) the local Postgres container"
 	@echo "  make db-down        Stop it, keeping the data volume"
@@ -121,7 +122,7 @@ psql:
 # pass through from the environment.
 infra-check: export UV_LINK_MODE := copy
 infra-check:
-	uvx cfn-lint infra/cloudformation.yaml
+	uvx cfn-lint infra/cloudformation.yaml infra/github-oidc.yaml
 	uvx --from shellcheck-py shellcheck infra/bootstrap.sh infra/deploy.sh infra/test-deploy.sh
 	bash infra/test-deploy.sh
 
@@ -136,6 +137,9 @@ aws-url:
 
 aws-destroy:
 	bash infra/deploy.sh destroy
+
+aws-oidc:
+	bash infra/deploy.sh oidc
 
 e2e-aws:
 	npm ci --prefix e2e

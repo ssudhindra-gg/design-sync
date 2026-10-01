@@ -5,6 +5,9 @@
 #   infra/deploy.sh update    pull GIT_REF on the instance and rebuild (keeps data)
 #   infra/deploy.sh url       print the HTTPS URL
 #   infra/deploy.sh e2e       run the Playwright suite against the URL
+#   infra/deploy.sh release   CI: deploy, then update to RELEASE_SHA (full SHA)
+#   infra/deploy.sh verify S  wait until /api/health reports commit S, database ok
+#   infra/deploy.sh oidc      one-time: GitHub OIDC deploy role (admin credentials)
 #   infra/deploy.sh destroy   delete the stack and everything in it
 #
 # Settings: AWS_REGION (us-east-1), STACK_NAME (design-sync), GIT_REF (main).
@@ -18,6 +21,10 @@ export MSYS_NO_PATHCONV=1
 REGION="${AWS_REGION:-us-east-1}"
 STACK="${STACK_NAME:-design-sync}"
 GIT_REF="${GIT_REF:-main}"
+OIDC_STACK="${OIDC_STACK_NAME:-design-sync-github-oidc}"
+# How long `verify` polls (overridable for the offline checks).
+VERIFY_ATTEMPTS="${VERIFY_ATTEMPTS:-60}"
+VERIFY_INTERVAL="${VERIFY_INTERVAL:-10}"
 # Relative paths from here on: the Windows aws.exe cannot read /c/... paths.
 cd "$(dirname "$0")/.."
 
@@ -35,8 +42,8 @@ stack_parameter() {  # stack_parameter <ParameterKey>
 }
 
 # Empty when the stack does not exist.
-stack_status() {
-  cfn describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true
+stack_status() {  # stack_status [stack name]
+  cfn describe-stacks --stack-name "${1:-$STACK}" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true
 }
 
 app_url() {
@@ -172,14 +179,87 @@ cmd_destroy() {
   echo "deleted"
 }
 
+cmd_release() {
+  [[ "${RELEASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || die "RELEASE_SHA must be the full commit SHA to release"
+  check_credentials
+  # deploy applies template changes under the ref the stack was created with
+  # (main for a new stack); update then moves the instance to the exact commit.
+  local status
+  status=$(stack_status)
+  if [ -n "$status" ] && [ "$status" != ROLLBACK_COMPLETE ]; then
+    GIT_REF=$(stack_parameter GitRef)
+  else
+    GIT_REF=main
+  fi
+  cmd_deploy
+  GIT_REF=$RELEASE_SHA
+  cmd_update
+}
+
+# True when a /api/health body reports status and database ok and version $2.
+# Pattern matching, not a JSON parser: the app renders compact JSON.
+health_ok() {
+  [[ "$1" == *'"status":"ok"'* && "$1" == *'"database":"ok"'* && "$1" == *"\"version\":\"$2\""* ]]
+}
+
+cmd_verify() {
+  local want=${1:-} url body=""
+  [[ "$want" =~ ^[0-9a-f]{40}$ ]] || die "usage: $0 verify <full commit sha>"
+  check_credentials
+  url=$(app_url)
+  for _ in $(seq 1 "$VERIFY_ATTEMPTS"); do
+    body=$(curl -fsS "$url/api/health" 2>/dev/null || true)
+    if health_ok "$body" "$want"; then
+      echo "healthy: $url runs $want"
+      return 0
+    fi
+    sleep "$VERIFY_INTERVAL"
+  done
+  die "$url/api/health never reported $want with the database ok; last response: ${body:-<none>}"
+}
+
+github_repository() {
+  git remote get-url origin | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##'
+}
+
+cmd_oidc() {
+  check_credentials
+  local provider arn
+  local params=("GitHubRepository=$(github_repository)")
+  if [ -z "$(stack_status "$OIDC_STACK")" ]; then
+    # One provider per URL per account: reuse an existing one. Decided at
+    # create only; later runs keep the stack's values, so a provider this
+    # stack created is never handed over and deleted.
+    provider=$(aws iam list-open-id-connect-providers \
+      --query "OpenIDConnectProviderList[?ends_with(Arn, '/token.actions.githubusercontent.com')].Arn | [0]" \
+      --output text)
+    if [[ "$provider" == arn:* ]]; then
+      params+=("CreateOidcProvider=false" "ExistingOidcProviderArn=$provider")
+    else
+      params+=("CreateOidcProvider=true")
+    fi
+  fi
+  cfn deploy --template-file infra/github-oidc.yaml --stack-name "$OIDC_STACK" \
+    --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
+    --parameter-overrides "${params[@]}"
+  arn=$(cfn describe-stacks --stack-name "$OIDC_STACK" \
+    --query "Stacks[0].Outputs[?OutputKey=='RoleArn'].OutputValue" --output text)
+  echo "Set these GitHub repository variables (Settings > Secrets and variables > Actions > Variables):"
+  echo "  AWS_ROLE_ARN=$arn"
+  echo "  AWS_REGION=$REGION"
+}
+
 case "${1:-}" in
   deploy) cmd_deploy ;;
   update) cmd_update ;;
   url) check_credentials; app_url ;;
+  release) cmd_release ;;
+  verify) cmd_verify "${2:-}" ;;
+  oidc) cmd_oidc ;;
   e2e) cmd_e2e ;;
   destroy) cmd_destroy ;;
   *)
-    echo "usage: $0 deploy|update|url|e2e|destroy" >&2
+    echo "usage: $0 deploy|update|release|verify|url|e2e|oidc|destroy" >&2
     exit 2
     ;;
 esac
