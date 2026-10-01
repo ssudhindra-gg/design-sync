@@ -83,7 +83,7 @@ wait_for_url() {
   local url=$1
   echo "waiting for $url (CloudFront can take 5-10 minutes on first deploy)..." >&2
   for _ in $(seq 1 90); do
-    if curl -fsS -o /dev/null "$url/openapi.json" 2>/dev/null; then return 0; fi
+    if curl -fsS -o /dev/null "$url/api/health" 2>/dev/null; then return 0; fi
     sleep 10
   done
   die "$url did not answer within 15 minutes"
@@ -130,7 +130,7 @@ cmd_update() {
   # log goes to a file because SSM keeps only the first 8,000 characters of
   # stderr, and a failed build's error comes last.
   local log=/var/log/design-sync-update.log
-  local script="{ cd /opt/design-sync && git fetch origin && git checkout -f \$(git rev-parse --verify -q origin/$GIT_REF || echo $GIT_REF) && docker compose --progress plain up -d --build; } > $log 2>&1 || { tail -n 60 $log >&2; exit 1; }"
+  local script="{ cd /opt/design-sync && git fetch origin && git checkout -f \$(git rev-parse --verify -q origin/$GIT_REF || echo $GIT_REF) && export APP_VERSION=\$(git rev-parse HEAD) && docker compose --progress plain up -d --build; } > $log 2>&1 || { tail -n 60 $log >&2; exit 1; }"
   command_id=$(aws ssm send-command --region "$REGION" --instance-ids "$instance" \
     --document-name AWS-RunShellScript --comment "design-sync update to $GIT_REF" \
     --parameters "{\"commands\":[\"$script\"],\"executionTimeout\":[\"1800\"]}" \

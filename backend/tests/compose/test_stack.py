@@ -33,3 +33,8 @@ def test_app_writes_sessions_to_postgres(compose: Compose, new_client: Callable[
 
     stored = compose.psql(f"select state->'session'->>'title' from sessions where id = '{session_id}'")
     assert stored == title
+
+
+def test_health_reports_the_version_compose_passed_in(new_client: Callable[[], httpx.Client]) -> None:
+    body = new_client().get("/api/health").json()
+    assert body == {"status": "ok", "database": "ok", "version": "compose-test"}

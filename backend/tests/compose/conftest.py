@@ -49,7 +49,7 @@ class Compose:
         # would recreate the app on the default port.
         result = subprocess.run(
             ["docker", "compose", "-f", str(COMPOSE_FILE), "-p", PROJECT, *args],
-            env={**os.environ, "APP_PORT": str(APP_PORT)},
+            env={**os.environ, "APP_PORT": str(APP_PORT), "APP_VERSION": "compose-test"},
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -73,7 +73,7 @@ class Compose:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if httpx.get(f"{BASE_URL}/openapi.json", timeout=2).status_code == 200:
+                if httpx.get(f"{BASE_URL}/api/health", timeout=2).status_code == 200:
                     return
             except httpx.TransportError:
                 pass

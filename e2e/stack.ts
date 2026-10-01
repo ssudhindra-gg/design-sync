@@ -35,7 +35,7 @@ export async function waitUntilServing(timeoutMs = 120_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      if ((await fetch(`${BASE_URL}/openapi.json`)).ok) return;
+      if ((await fetch(`${BASE_URL}/api/health`)).ok) return;
     } catch {
       // Not listening yet.
     }

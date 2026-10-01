@@ -65,7 +65,7 @@ VOLUME ["/app/data"]
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD ["python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/openapi.json').read()"]
+    CMD ["python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/api/health').read()"]
 
 # Shell form so $PORT is expanded; uvicorn then replaces the shell.
 CMD exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"

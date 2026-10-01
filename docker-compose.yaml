@@ -28,6 +28,9 @@ services:
       context: .
     environment:
       DATABASE_URL: postgresql+psycopg://sdip:sdip@db:5432/sdip
+      # The commit being run; /api/health reports it. Set by infra/bootstrap.sh
+      # and `make aws-update` on AWS, by the compose tests in CI.
+      APP_VERSION: ${APP_VERSION:-dev}
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
