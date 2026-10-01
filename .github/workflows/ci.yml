@@ -1,0 +1,124 @@
+# Tests every pull request and push to main; deploys main to AWS.
+# See docs/superpowers/specs/2026-09-30-ci-cd-pipeline-design.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sdip
+          POSTGRES_PASSWORD: sdip
+          POSTGRES_DB: sdip
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sdip -d sdip"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0 # publishes no floating major tag
+      # The whole suite, including the Postgres integration tests.
+      - run: make test-pg
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+        env:
+          VITE_API_URL: /api
+
+  compose:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0 # publishes no floating major tag
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Integration tests against docker-compose.yaml
+        run: make test-compose
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: End-to-end tests against docker-compose.yaml
+        working-directory: e2e
+        run: npm test
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-results
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          if-no-files-found: ignore
+
+  deploy:
+    needs: compose
+    # Skipped (not failed) until the one-time OIDC setup has set AWS_ROLE_ARN.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    # A first release (stack create, image build, CloudFront) can take over an
+    # hour; the AWS session below is sized to match.
+    timeout-minutes: 120
+    concurrency:
+      group: aws-deploy
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+      - name: Release this commit
+        id: release
+        # Skips (released=false) when main has moved past this commit.
+        run: bash infra/deploy.sh release
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+      - name: Verify /api/health reports this commit
+        if: steps.release.outputs.released == 'true'
+        run: bash infra/deploy.sh verify "$GITHUB_SHA"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Smoke test the live URL
+        if: steps.release.outputs.released == 'true'
+        run: |
+          npm ci --prefix e2e
+          (cd e2e && npx playwright install --with-deps chromium)
+          bash infra/deploy.sh e2e

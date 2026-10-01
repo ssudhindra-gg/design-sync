@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .auth import get_store_dependency
-from .routers import auth, chat, diagram, notes, participants, realtime, sessions, snapshots
+from .routers import auth, chat, diagram, health, notes, participants, realtime, sessions, snapshots
 from .static import mount_frontend
 from .store import DatabaseStore
 
@@ -60,7 +60,7 @@ def create_app(store: DatabaseStore | None = None) -> FastAPI:
             },
         )
 
-    route_modules = [auth, sessions, participants, diagram, chat, notes, snapshots, realtime]
+    route_modules = [health, auth, sessions, participants, diagram, chat, notes, snapshots, realtime]
     for module in route_modules:
         app.include_router(module.router, prefix="/api")
         # A root alias makes the service convenient behind a reverse proxy that

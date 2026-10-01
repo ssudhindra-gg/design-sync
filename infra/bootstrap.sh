@@ -35,10 +35,13 @@ chmod +x "$plugins/docker-compose" "$plugins/docker-buildx"
 # same port without repeating it.
 echo "APP_PORT=80" > "$REPO_DIR/.env"
 cd "$REPO_DIR"
+# Reported by /api/health, so a deploy can prove which commit is running.
+APP_VERSION=$(git -C "$REPO_DIR" rev-parse HEAD)
+export APP_VERSION
 docker compose --progress plain up -d --build
 
 for _ in $(seq 1 60); do
-  if curl -fsS -o /dev/null http://127.0.0.1/openapi.json; then
+  if curl -fsS -o /dev/null http://127.0.0.1/api/health; then
     echo "design-sync is serving on port 80"
     exit 0
   fi

@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import WebSocket
-from sqlalchemy import JSON, String, create_engine, select
+from sqlalchemy import JSON, String, create_engine, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session as DatabaseSession, mapped_column, sessionmaker
@@ -91,6 +91,8 @@ class DatabaseStore:
         with self._db() as db:
             return {r.username: AccountRecord(username=r.username, password_hash=r.password_hash) for r in db.scalars(select(AccountRow)).all()}
     def _db(self) -> DatabaseSession: return self._session_factory()
+    def ping(self) -> None:
+        with self.engine.connect() as connection: connection.execute(text("SELECT 1"))
     @staticmethod
     def _state(row: SessionRow | None) -> SessionState | None: return SessionState.model_validate(row.state) if row else None
     @staticmethod
