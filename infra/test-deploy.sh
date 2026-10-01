@@ -121,6 +121,7 @@ check "update logs the build and prints its tail on failure" 1 "tail -n 60 /var/
   fake_aws_and_git env FAKE_STACK_STATUS=CREATE_COMPLETE FAKE_UPDATE_STATUS=Failed bash infra/deploy.sh update
 check "update reports the deployed commit as APP_VERSION" 0 'export APP_VERSION=\$\(git rev-parse HEAD\)' -- \
   fake_aws_and_git env FAKE_STACK_STATUS=CREATE_COMPLETE bash infra/deploy.sh update
+# shellcheck disable=SC2016  # $f expands inside the bash -c script
 check "every readiness check uses the health endpoint" 0 "all use /api/health" -- \
   bash -c 'for f in infra/deploy.sh infra/bootstrap.sh Dockerfile e2e/stack.ts backend/tests/compose/conftest.py; do grep -qF /api/health "$f" || { echo "missing in $f"; exit 1; }; done; echo "all use /api/health"'
 check "bootstrap failure is signalled to CloudFormation" 0 "trap 'signal 1' ERR" -- \
