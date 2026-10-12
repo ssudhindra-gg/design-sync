@@ -1,12 +1,26 @@
 # Hosting
 
-## Production demo
+## Environments
 
-Design Sync is deployed as a Render Free web service:
+The infrastructure is split into two independent Render web services. Both currently deploy
+from `main`, so a commit pushed to `main` is automatically deployed to both environments.
+
+### Development
 
 - Public URL: <https://design-sync-c6hy.onrender.com>
 - Render service: `design-sync`
 - Service ID: `srv-db67p6vavr4c739uo070`
+- Dashboard: <https://dashboard.render.com/web/srv-db67p6vavr4c739uo070>
+
+### Production
+
+- Public URL: <https://design-sync-production.onrender.com>
+- Render service: `design-sync-production`
+- Service ID: `srv-db687ip42hec73b9ghg0`
+- Dashboard: <https://dashboard.render.com/web/srv-db687ip42hec73b9ghg0>
+
+### Shared service settings
+
 - Region: Oregon
 - Runtime: Docker
 - Plan: Free
@@ -17,29 +31,33 @@ Design Sync is deployed as a Render Free web service:
 
 ## Deployment configuration
 
-Render uses the repository's [`render.yaml`](render.yaml) Blueprint and [`Dockerfile`](Dockerfile).
-The service builds the frontend and serves it from the FastAPI application. The frontend and
-backend therefore use the same public origin, including the `/api` routes and WebSocket support.
+Render uses the repository's [`render.yaml`](render.yaml) Blueprint and [`Dockerfile`](Dockerfile)
+for the service configuration. The production service was created as an independent clone of the
+development service. Each service builds the frontend and serves it from its own FastAPI process;
+the frontend and backend therefore use the same public origin, including the `/api` routes and
+WebSocket support.
 
 The Free deployment uses SQLite at `/app/data/whiteboard.db`. The `PORT` is supplied by Render;
 the container starts Uvicorn on that port.
 
 ## Verification
 
-The deployed service was verified with the following successful responses:
+Both deployed services were verified with the following successful responses:
 
 - `GET /` — HTTP 200
 - `GET /openapi.json` — HTTP 200
 - `GET /docs` — HTTP 200
 
 The initial live deployment was verified at commit `8d8b830` (`Add one-click Render deployment link`).
+The production copy was verified live at commit `3844500` (`Clarify deployment verification note`).
 
 ## Redeploying
 
-Push a new commit to `main`; Render will automatically build and deploy it. The service can also
-be redeployed manually from the Render dashboard:
+Push a new commit to `main`; Render will automatically build and deploy both services. They can
+also be redeployed manually from their dashboards:
 
-<https://dashboard.render.com/web/srv-db67p6vavr4c739uo070>
+- Development: <https://dashboard.render.com/web/srv-db67p6vavr4c739uo070>
+- Production: <https://dashboard.render.com/web/srv-db687ip42hec73b9ghg0>
 
 To validate the Blueprint locally with the Render CLI:
 
