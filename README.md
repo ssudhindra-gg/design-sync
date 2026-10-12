@@ -49,6 +49,24 @@ docker compose down            # add -v to also delete the database
 Postgres is not published to the host, so it does not clash with `make db-up`.
 Reach it with `docker compose exec db psql -U sdip -d sdip`.
 
+### Deploy a free public demo on Render
+
+The repository includes [`render.yaml`](./render.yaml), which deploys the
+existing Dockerfile as a single Render Free web service. Render supplies the
+public URL, HTTPS, and WebSocket proxying; the app continues to use its
+same-origin `/api` configuration.
+
+1. Push the repository to GitHub.
+2. In Render, choose **New → Blueprint**, select the repository, and apply
+   `render.yaml`.
+3. Select the **Free** plan if Render asks for confirmation.
+
+Render will provide a URL like `https://design-sync.onrender.com`. The service
+sleeps after inactivity and may take about a minute to wake up. This deployment
+uses SQLite on Render's ephemeral filesystem, so the demo session data can be
+lost after a restart, redeploy, or sleep cycle. Do not use this configuration
+for production data.
+
 ### Pointing the UI at a different API origin
 
 Vite inlines `import.meta.env` values into the client bundle, so the API origin

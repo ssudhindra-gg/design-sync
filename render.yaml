@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: design-sync
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /openapi.json
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_URL
+        value: sqlite:////app/data/whiteboard.db
