@@ -32,7 +32,7 @@ The deployed service was verified with the following successful responses:
 - `GET /openapi.json` — HTTP 200
 - `GET /docs` — HTTP 200
 
-The live deployment corresponds to commit `8d8b830` (`Add one-click Render deployment link`).
+The initial live deployment was verified at commit `8d8b830` (`Add one-click Render deployment link`).
 
 ## Redeploying
 
