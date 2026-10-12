@@ -56,6 +56,8 @@ existing Dockerfile as a single Render Free web service. Render supplies the
 public URL, HTTPS, and WebSocket proxying; the app continues to use its
 same-origin `/api` configuration.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ssudhindra-gg/design-sync)
+
 1. Push the repository to GitHub.
 2. In Render, choose **New → Blueprint**, select the repository, and apply
    `render.yaml`.
