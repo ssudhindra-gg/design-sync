@@ -1,0 +1,105 @@
+name: Promote dev to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: >-
+          Optional live dev commit SHA to promote. Leave blank to use the latest live dev deploy.
+        required: false
+        type: string
+
+concurrency:
+  group: production-promotion
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote dev commit to production
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://design-sync-production.onrender.com
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_DEV_SERVICE_ID: srv-db67p6vavr4c739uo070
+      RENDER_PRODUCTION_SERVICE_ID: srv-db687ip42hec73b9ghg0
+
+    steps:
+      - name: Install Render CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/render-oss/cli/main/bin/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/render" --version
+
+      - name: Resolve live dev commit
+        id: source
+        shell: bash
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+
+          test -n "$RENDER_API_KEY" || {
+            echo "RENDER_API_KEY is not configured." >&2
+            exit 1
+          }
+
+          test -n "$RENDER_DEV_SERVICE_ID" || {
+            echo "The dev Render service ID is not configured." >&2
+            exit 1
+          }
+
+          test -n "$RENDER_PRODUCTION_SERVICE_ID" || {
+            echo "The production Render service ID is not configured." >&2
+            exit 1
+          }
+
+          dev_deploys="$(render deploys list "$RENDER_DEV_SERVICE_ID" -o json)"
+
+          if [ -n "$REQUESTED_COMMIT" ]; then
+            source_sha="$REQUESTED_COMMIT"
+            if ! jq -e --arg sha "$source_sha" \
+              'any(.[]; (.status == "live") and (((.commit.id // "") == $sha) or ((.commit.id // "") | startswith($sha))))' \
+              <<< "$dev_deploys" >/dev/null; then
+              echo "The requested commit is not a live deploy on the dev service: $source_sha" >&2
+              exit 1
+            fi
+          else
+            source_sha="$(jq -r '[.[] | select(.status == "live" and .commit.id != null) | .commit.id] | .[0] // empty' <<< "$dev_deploys")"
+          fi
+
+          if ! [[ "$source_sha" =~ ^[[:xdigit:]]{7,40}$ ]]; then
+            echo "Could not resolve a valid live dev commit SHA." >&2
+            exit 1
+          fi
+
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "Promoting live dev commit $source_sha"
+
+      - name: Deploy selected commit to production
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          render deploys create "$RENDER_PRODUCTION_SERVICE_ID" \
+            --commit "$SOURCE_SHA" \
+            --wait \
+            --confirm \
+            -o json
+
+      - name: Verify production
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 5 --retry-max-time 180 \
+            https://design-sync-production.onrender.com/openapi.json \
+            >/dev/null
+          echo "Production is healthy at https://design-sync-production.onrender.com"

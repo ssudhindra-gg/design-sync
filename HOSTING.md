@@ -2,8 +2,8 @@
 
 ## Environments
 
-The infrastructure is split into two independent Render web services. Both currently deploy
-from `main`, so a commit pushed to `main` is automatically deployed to both environments.
+The infrastructure is split into two independent Render web services. Both are linked to `main`,
+but only development auto-deploys; production is updated through the manual promotion workflow.
 
 ### Development
 
@@ -19,15 +19,17 @@ from `main`, so a commit pushed to `main` is automatically deployed to both envi
 - Service ID: `srv-db687ip42hec73b9ghg0`
 - Dashboard: <https://dashboard.render.com/web/srv-db687ip42hec73b9ghg0>
 
-### Shared service settings
+### Service settings
 
 - Region: Oregon
 - Runtime: Docker
 - Plan: Free
 - Source repository: <https://github.com/ssudhindra-gg/design-sync>
-- Branch: `main`
-- Auto-deploy: enabled for new commits on `main`
 - Health check: `/openapi.json`
+
+The development service tracks `main` with auto-deploy enabled. The production service also uses
+`main` as its linked branch, but auto-deploy is disabled so production changes only go through the
+manual promotion workflow below.
 
 ## Deployment configuration
 
@@ -53,8 +55,9 @@ The production copy was verified live at commit `3844500` (`Clarify deployment v
 
 ## Redeploying
 
-Push a new commit to `main`; Render will automatically build and deploy both services. They can
-also be redeployed manually from their dashboards:
+Push a new commit to `main`; Render automatically builds and deploys the development service.
+Production remains on its last promoted commit until the workflow is run. Both services can also
+be redeployed manually from their dashboards:
 
 - Development: <https://dashboard.render.com/web/srv-db67p6vavr4c739uo070>
 - Production: <https://dashboard.render.com/web/srv-db687ip42hec73b9ghg0>
@@ -64,6 +67,21 @@ To validate the Blueprint locally with the Render CLI:
 ```powershell
 render blueprints validate render.yaml
 ```
+
+## Manual production promotion
+
+The [`Promote dev to production`](.github/workflows/promote-production.yml) GitHub Actions
+workflow is started manually from the Actions tab. It:
+
+1. Finds the latest live deployment on the development service.
+2. Optionally accepts a specific live dev commit SHA.
+3. Deploys that exact commit to the production service.
+4. Waits for Render to report success and checks `/openapi.json`.
+
+Before the first run, add a repository Actions secret named `RENDER_API_KEY`. Create the key in
+Render Account Settings and keep it out of the repository. The workflow already contains the two
+Render service IDs. For an additional approval gate, configure required reviewers for the GitHub
+`production` environment.
 
 ## Free-tier limitations
 
