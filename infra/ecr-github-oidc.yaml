@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECR repository and GitHub Actions OIDC role for Design Sync images.
+
+Parameters:
+  GitHubRepository:
+    Type: String
+    Default: ssudhindra-gg/design-sync
+    Description: GitHub repository in OWNER/REPOSITORY form.
+  RepositoryName:
+    Type: String
+    Default: design-sync
+    Description: Private ECR repository name.
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: Set true only when this AWS account does not already have the GitHub OIDC provider.
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    Description: Existing token.actions.githubusercontent.com provider ARN when CreateOidcProvider is false.
+
+Conditions:
+  ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images after one day",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": {"type": "expire"}
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep the newest 50 tagged images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 50
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+
+  GitHubActionsEcrRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: design-sync-github-ecr
+      Description: Allows the design-sync GitHub Actions workflow to publish ECR images.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepository}:ref:refs/heads/main
+      Policies:
+        - PolicyName: publish-design-sync-images
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: EcrLogin
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: EcrRepositoryWrite
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:DescribeImages
+                  - ecr:DescribeRepositories
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:PutImageTagMutability
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt EcrRepository.Arn
+              - Sid: EcrRepositoryCreate
+                Effect: Allow
+                Action:
+                  - ecr:CreateRepository
+                Resource: '*'
+
+Outputs:
+  EcrRepositoryUri:
+    Description: ECR image registry URI.
+    Value: !GetAtt EcrRepository.RepositoryUri
+  GitHubActionsRoleArn:
+    Description: Set this value as the GitHub Actions repository variable AWS_ROLE_ARN.
+    Value: !GetAtt GitHubActionsEcrRole.Arn

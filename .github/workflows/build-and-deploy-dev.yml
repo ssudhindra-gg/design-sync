@@ -1,0 +1,173 @@
+name: Build image and deploy dev
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-and-deploy-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'design-sync' }}
+  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+  RENDER_OWNER_ID: ${{ vars.RENDER_OWNER_ID || 'tea-db4sthp42hec73esmmn0' }}
+  RENDER_REGISTRY_CREDENTIAL_NAME: ${{ vars.RENDER_REGISTRY_CREDENTIAL_NAME || 'design-sync-ecr' }}
+  RENDER_DEV_SERVICE_ID: srv-db67p6vavr4c739uo070
+
+jobs:
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      tag: ${{ steps.image.outputs.tag }}
+      digest: ${{ steps.push.outputs.digest }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-tag-mutability IMMUTABLE \
+              --image-scanning-configuration scanOnPush=true \
+              --region "$AWS_REGION" >/dev/null
+          else
+            aws ecr put-image-tag-mutability \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-tag-mutability IMMUTABLE \
+              --region "$AWS_REGION" >/dev/null
+          fi
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate immutable image tag
+        id: image
+        shell: bash
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          timestamp="$(date -u +%Y%m%d-%H%M%S)"
+          short_sha="${GITHUB_SHA:0:7}"
+          tag="${timestamp}-${short_sha}"
+          image="${ECR_REGISTRY}/${ECR_REPOSITORY}:${tag}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Building $image"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy image to dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: development
+      url: https://design-sync-c6hy.onrender.com
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_URL: ${{ needs.build.outputs.image }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'design-sync' }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_OWNER_ID: ${{ vars.RENDER_OWNER_ID || 'tea-db4sthp42hec73esmmn0' }}
+      RENDER_REGISTRY_CREDENTIAL_NAME: ${{ vars.RENDER_REGISTRY_CREDENTIAL_NAME || 'design-sync-ecr' }}
+      RENDER_DEV_SERVICE_ID: srv-db67p6vavr4c739uo070
+
+    steps:
+      - name: Check out deployment scripts
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Refresh Render ECR credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          export ECR_PASSWORD="$(aws ecr get-login-password --region "$AWS_REGION")"
+          credential_id="$(bash infra/render-image.sh update-credential)"
+          echo "RENDER_REGISTRY_CREDENTIAL_ID=$credential_id" >> "$GITHUB_ENV"
+
+      - name: Configure dev as an image-backed service
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash infra/render-image.sh configure-service \
+            "$RENDER_DEV_SERVICE_ID" \
+            "$IMAGE_URL" \
+            "$RENDER_REGISTRY_CREDENTIAL_ID" \
+            off
+
+      - name: Install Render CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/render-oss/cli/main/bin/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pull and serve image on dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          render deploys create "$RENDER_DEV_SERVICE_ID" \
+            --image "$IMAGE_URL" \
+            --wait \
+            --confirm \
+            -o json
+
+      - name: Verify dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 5 --retry-max-time 180 \
+            https://design-sync-c6hy.onrender.com/openapi.json \
+            >/dev/null
+          echo "Dev is healthy at https://design-sync-c6hy.onrender.com"

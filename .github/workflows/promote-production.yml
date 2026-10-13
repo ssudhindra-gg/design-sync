@@ -1,13 +1,7 @@
-name: Promote dev to production
+name: Promote dev image to production
 
 on:
   workflow_dispatch:
-    inputs:
-      commit_sha:
-        description: >-
-          Optional live dev commit SHA to promote. Leave blank to use the latest live dev deploy.
-        required: false
-        type: string
 
 concurrency:
   group: production-promotion
@@ -18,13 +12,17 @@ permissions:
 
 jobs:
   promote:
-    name: Promote dev commit to production
+    name: Promote currently deployed dev image
     runs-on: ubuntu-latest
     environment:
       name: production
       url: https://design-sync-production.onrender.com
     env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_OWNER_ID: ${{ vars.RENDER_OWNER_ID || 'tea-db4sthp42hec73esmmn0' }}
+      RENDER_REGISTRY_CREDENTIAL_NAME: ${{ vars.RENDER_REGISTRY_CREDENTIAL_NAME || 'design-sync-ecr' }}
       RENDER_DEV_SERVICE_ID: srv-db67p6vavr4c739uo070
       RENDER_PRODUCTION_SERVICE_ID: srv-db687ip42hec73b9ghg0
 
@@ -37,59 +35,70 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/render" --version
 
-      - name: Resolve live dev commit
+      - name: Resolve currently deployed dev image
         id: source
         shell: bash
-        env:
-          REQUESTED_COMMIT: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
-
           test -n "$RENDER_API_KEY" || {
             echo "RENDER_API_KEY is not configured." >&2
             exit 1
           }
-
-          test -n "$RENDER_DEV_SERVICE_ID" || {
-            echo "The dev Render service ID is not configured." >&2
-            exit 1
-          }
-
-          test -n "$RENDER_PRODUCTION_SERVICE_ID" || {
-            echo "The production Render service ID is not configured." >&2
+          test -n "$AWS_ROLE_ARN" || {
+            echo "Repository variable AWS_ROLE_ARN is not configured." >&2
             exit 1
           }
 
           dev_deploys="$(render deploys list "$RENDER_DEV_SERVICE_ID" -o json)"
+          image_url="$(jq -r '[.[] | select(.status == "live") | (.image.ref // .image.url // empty)] | .[0] // empty' <<< "$dev_deploys")"
 
-          if [ -n "$REQUESTED_COMMIT" ]; then
-            source_sha="$REQUESTED_COMMIT"
-            if ! jq -e --arg sha "$source_sha" \
-              'any(.[]; (.status == "live") and (((.commit.id // "") == $sha) or ((.commit.id // "") | startswith($sha))))' \
-              <<< "$dev_deploys" >/dev/null; then
-              echo "The requested commit is not a live deploy on the dev service: $source_sha" >&2
-              exit 1
-            fi
-          else
-            source_sha="$(jq -r '[.[] | select(.status == "live" and .commit.id != null) | .commit.id] | .[0] // empty' <<< "$dev_deploys")"
+          if [ -z "$image_url" ]; then
+            echo "The dev service has no live image-backed deployment yet. Run Build image and deploy dev first." >&2
+            exit 1
           fi
-
-          if ! [[ "$source_sha" =~ ^[[:xdigit:]]{7,40}$ ]]; then
-            echo "Could not resolve a valid live dev commit SHA." >&2
+          if [[ "$image_url" != *.amazonaws.com/* ]]; then
+            echo "The live dev deployment is not an ECR image: $image_url" >&2
             exit 1
           fi
 
-          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
-          echo "Promoting live dev commit $source_sha"
+          echo "image=$image_url" >> "$GITHUB_OUTPUT"
+          echo "Promoting currently deployed dev image: $image_url"
 
-      - name: Deploy selected commit to production
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Refresh Render ECR credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          export ECR_PASSWORD="$(aws ecr get-login-password --region "$AWS_REGION")"
+          credential_id="$(bash infra/render-image.sh update-credential)"
+          echo "RENDER_REGISTRY_CREDENTIAL_ID=$credential_id" >> "$GITHUB_ENV"
+
+      - name: Configure production as an image-backed service
         env:
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          IMAGE_URL: ${{ steps.source.outputs.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash infra/render-image.sh configure-service \
+            "$RENDER_PRODUCTION_SERVICE_ID" \
+            "$IMAGE_URL" \
+            "$RENDER_REGISTRY_CREDENTIAL_ID" \
+            off
+
+      - name: Pull and serve the dev image on production
+        env:
+          IMAGE_URL: ${{ steps.source.outputs.image }}
         shell: bash
         run: |
           set -euo pipefail
           render deploys create "$RENDER_PRODUCTION_SERVICE_ID" \
-            --commit "$SOURCE_SHA" \
+            --image "$IMAGE_URL" \
             --wait \
             --confirm \
             -o json
