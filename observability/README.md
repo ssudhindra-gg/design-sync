@@ -47,6 +47,25 @@ Open the UIs:
 Grafana loads the **Design Sync application metrics** dashboard automatically.
 Use its `Environment` and `Deployed version` dropdowns to filter all four panels.
 
+The local Grafana project also provisions the **Repeated canvas
+component-creation failures** alert. It fires when at least 3 component
+creations fail in a rolling 5-minute window and that condition remains present
+for 2 minutes. The alert is grouped by service, environment, and deployed
+version, and includes the owner, dashboard link, and runbook link.
+
+### Repeated canvas component-creation failures
+
+This threshold represents repeated user-visible failures rather than a single
+bad request: three failed component writes in five minutes is enough to affect
+an interview session, while the two-minute pending period avoids paging on a
+single transient spike. The alert is linked to panel 4 of the application
+metrics dashboard.
+
+To test the rule locally, generate three invalid diagram writes, wait for the
+metric export and Prometheus evaluation intervals, then open **Alerting → Alert
+rules** in Grafana. The rule remains `Normal` when there is no telemetry so an
+idle Render service does not create a false incident.
+
 Set `GRAFANA_ADMIN_PASSWORD` before starting the project to use a different Grafana password. The default is intended only for local development.
 
 ## Lowest-cost cloud deployment: Grafana Cloud Free
@@ -80,6 +99,11 @@ signals are instrumented.
    stack. Select the Prometheus-compatible Grafana Cloud metrics datasource
    when prompted, then use the dashboard's environment and deployed-version
    filters.
+
+Grafana Cloud does not support file provisioning. Recreate or import the alert
+from `grafana/provisioning/alerting/application-alerts.yml` in the Grafana
+Cloud Alerting UI after importing the dashboard, preserving the same PromQL,
+threshold, pending period, labels, and annotations.
 
 The workflow updates only the required direct Render variables. The OTLP
 headers never enter the repository or workflow logs.

@@ -1,0 +1,77 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: design-sync-application
+    folder: Design Sync
+    interval: 30s
+    rules:
+      - uid: repeated-canvas-component-failures
+        title: Repeated canvas component-creation failures
+        condition: B
+        for: 2m
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: >-
+                sum by (job, environment, deployed_version) (
+                  increase(component_creation_failures_total[5m])
+                )
+              instant: true
+              intervalMs: 30000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 3
+                    type: gte
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 30000
+              maxDataPoints: 43200
+              refId: B
+              type: threshold
+        labels:
+          severity: warning
+          owner: design-sync-oncall
+          service: '{{ index $labels "job" }}'
+          environment: '{{ index $labels "environment" }}'
+          deployed_version: '{{ index $labels "deployed_version" }}'
+        annotations:
+          summary: >-
+            Canvas component creation is failing repeatedly for
+            {{ index $labels "job" }} in {{ index $labels "environment" }}
+          description: >-
+            At least 3 canvas component creations failed in the last 5 minutes
+            and the condition has remained present for 2 minutes. Service:
+            {{ index $labels "job" }}. Environment: {{ index $labels "environment" }}.
+            Deployed version: {{ index $labels "deployed_version" }}. Owner:
+            design-sync-oncall.
+          dashboard_url: '/d/design-sync-application-metrics/design-sync-application-metrics?orgId=1&var-environment={{ index $labels "environment" }}&var-deployed_version={{ index $labels "deployed_version" }}'
+          runbook_url: >-
+            https://github.com/ssudhindra-gg/design-sync/blob/main/observability/README.md#repeated-canvas-component-creation-failures
+        dashboardUid: design-sync-application-metrics
+        panelId: 4
