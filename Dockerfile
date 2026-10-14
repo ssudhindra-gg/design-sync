@@ -34,6 +34,8 @@ RUN npm run build \
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim AS runtime
 
+ARG DEPLOYED_VERSION=local
+
 COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
 
 ENV UV_PYTHON=/usr/local/bin/python3 \
@@ -56,6 +58,7 @@ COPY --from=frontend /build/.output/public /app/frontend/dist
 
 ENV FRONTEND_DIST=/app/frontend/dist \
     DATABASE_URL=sqlite:////app/data/whiteboard.db \
+    DEPLOYED_VERSION=${DEPLOYED_VERSION} \
     PORT=8000
 
 # Keep the SQLite file on a volume so sessions survive a container restart.

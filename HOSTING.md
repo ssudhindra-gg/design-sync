@@ -47,6 +47,19 @@ after that migration, or update the Blueprint with the ECR image URL and registr
 The Free deployment uses SQLite at `/app/data/whiteboard.db`. The `PORT` is supplied by Render;
 the container starts Uvicorn on that port.
 
+## Observability hosting
+
+The application and observability systems are separate. Local development uses
+the five-service Compose project in [`observability/`](observability/README.md).
+For cloud use, the least-cost option is Grafana Cloud Free, which provides
+managed Grafana, metrics, logs, and traces without adding an always-on
+observability VM. Configure `GRAFANA_CLOUD_OTLP_ENDPOINT` as a GitHub repository
+variable and `GRAFANA_CLOUD_OTLP_HEADERS` as a repository secret, then run
+[`Connect Render environments to observability`](.github/workflows/connect-observability.yml).
+That workflow configures both Render services and redeploys them with HTTPS
+OTLP/HTTP. Import the application dashboard from
+[`observability/grafana/dashboards/application-metrics.json`](observability/grafana/dashboards/application-metrics.json).
+
 ## Verification
 
 Both deployed services were verified with the following successful responses:

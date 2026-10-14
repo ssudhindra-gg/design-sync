@@ -149,6 +149,16 @@ class DatabaseStore:
     def find_participant(self, session_id: str, participant_id: str) -> Participant | None:
         state = self.get_state(session_id); participant = next((p for p in state.participants if p.id == participant_id), None) if state else None
         return copy.deepcopy(participant) if participant else None
+    def active_interview_participants(self) -> int:
+        with self._db() as db:
+            states = (self._state(row) for row in db.scalars(select(SessionRow)).all())
+            return sum(
+                1
+                for state in states
+                if state is not None and not state.session.ended
+                for participant in state.participants
+                if participant.status is ParticipantStatus.admitted
+            )
     def create_session(self, title: str, host_name: str):
         created = now_ms(); session = Session(id=make_id("s"), title=title.strip() or "System design interview", createdAt=created)
         host = Participant(id=make_id("p"), name=host_name.strip() or "Interviewer", role=Role.interviewer, status=ParticipantStatus.admitted, joinedAt=created); state = SessionState(session=session, participants=[host], diagram=Diagram(), notes=Notes())

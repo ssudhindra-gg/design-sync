@@ -11,3 +11,13 @@ services:
         value: "10000"
       - key: DATABASE_URL
         value: sqlite:////app/data/whiteboard.db
+      - key: DEPLOYMENT_ENVIRONMENT
+        value: development
+      - key: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
+      - key: OTEL_METRIC_EXPORT_INTERVAL
+        value: "15000"

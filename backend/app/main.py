@@ -6,9 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .auth import get_store_dependency
+from .metrics import ApplicationMetrics
 from .routers import auth, chat, diagram, notes, participants, realtime, sessions, snapshots
 from .static import mount_frontend
-from .store import DatabaseStore
+from .store import DatabaseStore, get_store
 
 
 def _error_content(detail: object, default_code: str = "http_error") -> dict[str, object]:
@@ -40,6 +41,13 @@ def create_app(store: DatabaseStore | None = None) -> FastAPI:
 
     if store is not None:
         app.dependency_overrides[get_store_dependency] = lambda: store
+
+    metrics_store = store or get_store()
+    app.state.application_metrics = ApplicationMetrics(metrics_store.active_interview_participants)
+
+    @app.on_event("shutdown")
+    async def shutdown_metrics() -> None:
+        app.state.application_metrics.shutdown()
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:

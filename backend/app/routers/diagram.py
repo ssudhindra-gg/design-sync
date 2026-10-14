@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Path
 from ..auth import bad_request_error, get_store_dependency, not_found_error, permission_error, require_admitted_participant, require_interviewer
 from ..auth import SessionPrincipal
 from ..models import Diagram, SessionEvent, SetNodeLockRequest
+from ..metrics import ApplicationMetrics, get_metrics_dependency
 from ..store import InMemoryStore
 
 router = APIRouter(tags=["Diagram"])
@@ -24,6 +25,7 @@ async def save_diagram(
     sessionId: str = Path(...),
     principal: SessionPrincipal = Depends(require_admitted_participant),
     store: InMemoryStore = Depends(get_store_dependency),
+    metrics: ApplicationMetrics = Depends(get_metrics_dependency),
 ) -> Diagram:
     if not _can_edit(store, sessionId, principal):
         raise permission_error("The diagram is read-only")
@@ -36,12 +38,17 @@ async def save_diagram(
         incoming = {node.id: node for node in diagram.nodes}
         if any(node_id not in incoming or incoming[node_id] != old_node for node_id, old_node in current_locked.items()):
             raise permission_error("A locked node cannot be changed by a guest")
+    current_node_ids = {node.id for node in current.diagram.nodes}
     try:
         saved = store.save_diagram(sessionId, diagram)
     except KeyError:
         raise not_found_error("Session not found")
     except ValueError as exc:
+        metrics.component_creation_failures.add(1, metrics.attributes)
         raise bad_request_error(str(exc))
+    created_count = len({node.id for node in saved.nodes} - current_node_ids)
+    if created_count:
+        metrics.canvas_elements_created.add(created_count, metrics.attributes)
     await store.publish(SessionEvent(type="diagram", sessionId=sessionId, origin=principal.participant_id))
     return saved
 

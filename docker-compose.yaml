@@ -26,10 +26,20 @@ services:
   app:
     build:
       context: .
+      args:
+        DEPLOYED_VERSION: ${DEPLOYED_VERSION:-local}
     environment:
       DATABASE_URL: postgresql+psycopg://sdip:sdip@db:5432/sdip
+      DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-development}
+      DEPLOYED_VERSION: ${DEPLOYED_VERSION:-local}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-5000}
     ports:
       - "${APP_PORT:-8000}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       # The schema is created at startup, so the database must accept
       # connections first, not merely have its container running.

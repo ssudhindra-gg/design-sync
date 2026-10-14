@@ -1,0 +1,77 @@
+name: Connect Render environments to observability
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: connect-observability
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+  RENDER_DEV_SERVICE_ID: srv-db67p6vavr4c739uo070
+  RENDER_PRODUCTION_SERVICE_ID: srv-db687ip42hec73b9ghg0
+  GRAFANA_CLOUD_OTLP_ENDPOINT: ${{ vars.GRAFANA_CLOUD_OTLP_ENDPOINT }}
+  GRAFANA_CLOUD_OTLP_HEADERS: ${{ secrets.GRAFANA_CLOUD_OTLP_HEADERS }}
+
+jobs:
+  connect:
+    name: Configure development and production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out deployment scripts
+        uses: actions/checkout@v4
+
+      - name: Validate Grafana Cloud settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RENDER_API_KEY" || { echo "RENDER_API_KEY is not configured." >&2; exit 1; }
+          test -n "$GRAFANA_CLOUD_OTLP_ENDPOINT" || { echo "Repository variable GRAFANA_CLOUD_OTLP_ENDPOINT is not configured." >&2; exit 1; }
+          test -n "$GRAFANA_CLOUD_OTLP_HEADERS" || { echo "Repository secret GRAFANA_CLOUD_OTLP_HEADERS is not configured." >&2; exit 1; }
+          case "$GRAFANA_CLOUD_OTLP_ENDPOINT" in
+            https://*) ;;
+            *) echo "GRAFANA_CLOUD_OTLP_ENDPOINT must use HTTPS." >&2; exit 1 ;;
+          esac
+
+      - name: Install Render CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/render-oss/cli/main/bin/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure development telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash infra/render-env.sh set "$RENDER_DEV_SERVICE_ID" DEPLOYMENT_ENVIRONMENT development
+          bash infra/render-env.sh set "$RENDER_DEV_SERVICE_ID" OTEL_EXPORTER_OTLP_PROTOCOL http/protobuf
+          bash infra/render-env.sh set "$RENDER_DEV_SERVICE_ID" OTEL_EXPORTER_OTLP_ENDPOINT "$GRAFANA_CLOUD_OTLP_ENDPOINT"
+          bash infra/render-env.sh set "$RENDER_DEV_SERVICE_ID" OTEL_EXPORTER_OTLP_HEADERS "$GRAFANA_CLOUD_OTLP_HEADERS"
+          bash infra/render-env.sh set "$RENDER_DEV_SERVICE_ID" OTEL_METRIC_EXPORT_INTERVAL 15000
+
+      - name: Configure production telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash infra/render-env.sh set "$RENDER_PRODUCTION_SERVICE_ID" DEPLOYMENT_ENVIRONMENT production
+          bash infra/render-env.sh set "$RENDER_PRODUCTION_SERVICE_ID" OTEL_EXPORTER_OTLP_PROTOCOL http/protobuf
+          bash infra/render-env.sh set "$RENDER_PRODUCTION_SERVICE_ID" OTEL_EXPORTER_OTLP_ENDPOINT "$GRAFANA_CLOUD_OTLP_ENDPOINT"
+          bash infra/render-env.sh set "$RENDER_PRODUCTION_SERVICE_ID" OTEL_EXPORTER_OTLP_HEADERS "$GRAFANA_CLOUD_OTLP_HEADERS"
+          bash infra/render-env.sh set "$RENDER_PRODUCTION_SERVICE_ID" OTEL_METRIC_EXPORT_INTERVAL 15000
+
+      - name: Redeploy development
+        shell: bash
+        run: |
+          set -euo pipefail
+          render deploys create "$RENDER_DEV_SERVICE_ID" --wait --confirm -o json
+
+      - name: Redeploy production
+        shell: bash
+        run: |
+          set -euo pipefail
+          render deploys create "$RENDER_PRODUCTION_SERVICE_ID" --wait --confirm -o json

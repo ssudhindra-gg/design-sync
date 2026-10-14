@@ -10,6 +10,7 @@ from ..auth import (
 )
 from ..auth import SessionPrincipal
 from ..models import CreateSessionRequest, CreateSessionResponse, Session, SessionEvent, SessionState, UpdateSessionRequest
+from ..metrics import ApplicationMetrics, get_metrics_dependency
 from ..store import InMemoryStore
 
 router = APIRouter(tags=["Sessions"])
@@ -21,8 +22,10 @@ async def create_session(
     response: Response,
     _account=Depends(get_current_account),
     store: InMemoryStore = Depends(get_store_dependency),
+    metrics: ApplicationMetrics = Depends(get_metrics_dependency),
 ) -> CreateSessionResponse:
     state, participant, token = store.create_session(payload.title, payload.hostName)
+    metrics.interview_rooms_created.add(1, metrics.attributes)
     response.set_cookie("ParticipantSession", token, httponly=True, secure=False, samesite="lax")
     await store.publish(SessionEvent(type="state", sessionId=state.session.id, origin=participant.id))
     return CreateSessionResponse(session=state.session, participant=participant)
